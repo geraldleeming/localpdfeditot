@@ -16,17 +16,27 @@ npm test           # end-to-end smoke test in Chromium
 
 ## Deploying to GitHub Pages
 
-`.github/workflows/deploy.yml` builds and publishes on every push to the default branch. One manual
-step is needed first, exactly once:
+`.github/workflows/deploy.yml` builds and publishes on every push to the default branch. Two manual
+steps are needed first, once each, and neither can be automated:
 
-> **Settings → Pages → Build and deployment → Source: GitHub Actions**
+1. **The repository must be public**, unless the account is on Pro, Team, or Enterprise. Pages is
+   not available for private repositories on GitHub Free.
+2. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+   `actions/configure-pages` has an `enablement: true` option that looks like it would do this, but
+   the default `GITHUB_TOKEN` cannot create a Pages site — it fails with "Resource not accessible by
+   integration".
 
-A workflow genuinely cannot do this for you. `actions/configure-pages` has an `enablement: true`
-option that looks like it should, but the default `GITHUB_TOKEN` is not permitted to create a Pages
-site and fails with "Resource not accessible by integration".
+Worth knowing before paying to avoid step 1: on Pro and Team a private repository can publish, but
+**the resulting site is still publicly viewable**. Restricting who can open the site requires
+Enterprise Cloud. If access control is the goal, a host with built-in protection (Cloudflare Pages
+with Access, for instance) is the better fit.
 
-After flipping that setting, re-run the latest workflow from the Actions tab (or push again). The
-site lands at `https://<user>.github.io/<repo>/`.
+Making this repository public costs nothing in privacy terms. It holds no secrets, and the app's
+guarantee is about where your PDF goes, not who can read the source — if anything, public source
+makes "nothing is uploaded" checkable rather than merely claimed.
+
+Then re-run the latest workflow from the Actions tab, or push again. The site lands at
+`https://<user>.github.io/<repo>/`.
 
 Two things make a project site work, and both are covered by `npm test`:
 
