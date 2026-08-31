@@ -16,7 +16,11 @@ new App().start();
 // Skipped on file:// where service workers are unavailable.
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(new URL('./sw.js', import.meta.url), { type: 'module' }).catch(() => {
+    // Registered as a classic worker from the site root. A module worker would
+    // rule out Firefox and older Safari for no gain — the file has no imports —
+    // and BASE_URL keeps the path right when the app is served from a
+    // subdirectory, as it is on GitHub Pages project sites.
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {
       // Offline support is a nicety; the app works without it.
     });
   });

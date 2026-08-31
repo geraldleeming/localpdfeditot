@@ -14,6 +14,27 @@ npm test           # end-to-end smoke test in Chromium
 
 `dist/` is plain static files. Any static host works, or open it from disk.
 
+## Deploying to GitHub Pages
+
+`.github/workflows/deploy.yml` builds and publishes on every push to the default branch. One manual
+step is needed first, because a workflow cannot enable Pages for you:
+
+> **Settings → Pages → Build and deployment → Source: GitHub Actions**
+
+Then push, or run the workflow from the Actions tab. The site lands at
+`https://<user>.github.io/<repo>/`.
+
+Two things make a project site work, and both are covered by `npm test`:
+
+- Vite is configured with `base: './'`, so assets resolve from a subdirectory rather than the domain
+  root.
+- The service worker is served from the site root, not from hashed `assets/`, so its scope covers
+  the whole app.
+
+`test/pages-check.mjs` serves `dist/` under a subpath exactly as Pages does, then takes the network
+away and reloads. If it still opens and renders a PDF, the "runs entirely on your device" claim is
+true in the literal sense.
+
 ## What it does
 
 Four actions, which are really two:
