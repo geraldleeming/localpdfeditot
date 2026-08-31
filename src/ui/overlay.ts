@@ -501,8 +501,13 @@ function signatureSvg(obj: SigObj, width: number, height: number, scale: number)
   svg.setAttribute('height', String(height));
   // Paths are built in pixel space rather than a 0..1 viewBox so that stroke
   // width stays circular instead of being skewed by a non-square box.
-  svg.setAttribute('stroke', cssColor(obj));
-  svg.setAttribute('stroke-width', String(Math.max(0.5, obj.thickness * scale)));
+  // Inline styles, not presentation attributes. The stylesheet's `svg` rule
+  // sets `stroke: currentColor` for icons, and a CSS declaration outranks a
+  // presentation attribute — so an attribute here was silently ignored and the
+  // signature took the UI text colour, rendering near-white over a white page
+  // in dark mode. The stroke width was being overridden the same way.
+  svg.style.stroke = cssColor(obj);
+  svg.style.strokeWidth = String(Math.max(0.5, obj.thickness * scale));
 
   for (const flat of obj.strokes) {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');

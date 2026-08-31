@@ -73,8 +73,6 @@ body {
 body {
   position: fixed;
   inset: 0;
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
   margin: 0;
   font-family: var(--font);
@@ -84,6 +82,11 @@ body {
   background: var(--bg);
   -webkit-text-size-adjust: 100%;
   overscroll-behavior: none;
+  /* Drops double-tap-to-zoom across the whole app while leaving panning and
+     pinch-zoom intact. Placing a signature or text is a tap-driven flow, and a
+     stray second tap zooming the page interrupts it. Set on the body so it
+     covers the sheets and gutters too, not just the pages. */
+  touch-action: manipulation;
 }
 
 svg {
@@ -181,9 +184,37 @@ button:disabled {
    Top bar
 --------------------------------------------------------------------------- */
 
-.topbar {
-  flex: none;
+/*
+ * The chrome layer. Sized and positioned to the visual viewport in layout
+ * pixels, then scaled by the inverse of the pinch zoom, so everything inside is
+ * laid out normally and still lands on screen at its true size when zoomed.
+ * The width and height are pre-divided by that inverse so the layer still spans
+ * the viewport once the scale is applied.
+ */
+#vv-layer {
+  position: fixed;
+  left: var(--vv-left, 0px);
+  top: var(--vv-top, 0px);
+  width: calc(var(--vv-width, 100vw) / var(--vv-inv, 1));
+  height: calc(var(--vv-height, 100vh) / var(--vv-inv, 1));
+  transform: scale(var(--vv-inv, 1));
+  transform-origin: 0 0;
   z-index: 30;
+  /* The layer spans the screen; only its actual controls should take taps. */
+  pointer-events: none;
+}
+
+/* Only the actual controls take taps. A blanket rule on every child would also
+   re-enable the hint and toast, which sit over the page — and an ID selector
+   would outrank any attempt to switch them off again. */
+#vv-layer .topbar,
+#vv-layer .toolbar {
+  pointer-events: auto;
+}
+
+.topbar {
+  position: absolute;
+  inset: 0 0 auto;
   height: var(--topbar-h);
   padding: 0 14px;
   padding-top: env(safe-area-inset-top);
@@ -257,12 +288,11 @@ button:disabled {
    Stage and pages
 --------------------------------------------------------------------------- */
 
+/* The chrome no longer occupies layout space, so the stage reserves the top
+   bar's height itself. */
 .stage {
-  position: relative;
-  flex: 1;
-  /* Without this a flex item refuses to shrink below its content, so the
-     viewer would push the shell taller than the screen. */
-  min-height: 0;
+  position: absolute;
+  inset: calc(var(--topbar-h) + env(safe-area-inset-top)) 0 0 0;
 }
 
 .viewer {
@@ -698,7 +728,7 @@ button:disabled {
 --------------------------------------------------------------------------- */
 
 .toolbar {
-  position: fixed;
+  position: absolute;
   left: 50%;
   bottom: calc(20px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
@@ -748,10 +778,13 @@ button:disabled {
 
 .hint,
 .toast {
-  position: fixed;
+  position: absolute;
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;
+  /* Purely informational, and both sit over the page. Without this the hint
+     reading "tap where you want to sign" swallowed the very tap it asks for. */
+  pointer-events: none;
   max-width: min(440px, calc(100vw - 32px));
   padding: 9px 16px;
   border-radius: 999px;

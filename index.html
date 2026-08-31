@@ -13,7 +13,49 @@
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>
-    <header class="topbar">
+    <main class="stage">
+      <div class="dropzone" data-when="empty">
+        <div class="dropzone-inner">
+          <svg class="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+            <path d="M14 3v5h5" />
+          </svg>
+          <h1>Drop a PDF here</h1>
+          <p>
+            Add text, add a signature, remove either one. Everything runs on this device — there is
+            no server and nothing is uploaded.
+          </p>
+          <button type="button" class="btn btn-primary btn-lg" data-action="open">
+            Choose a PDF
+          </button>
+          <ul class="assurances">
+            <li>Works offline once loaded</li>
+            <li>Your file is never sent anywhere</li>
+            <li>Saves as standard PDF annotations</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="viewer" id="viewer" data-when="loaded" hidden></div>
+
+      <div class="loading" id="loading" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <p>Opening your PDF…</p>
+      </div>
+    </main>
+
+    <!--
+      Everything that must stay put and stay legible lives in this layer. Pinch
+      zoom on iOS magnifies fixed elements along with the page and anchors them
+      to the layout viewport, so the toolbar grew huge and drifted off screen.
+      The layer is positioned and sized to the *visual* viewport and scaled by
+      the inverse of the zoom, which keeps its contents at their true size and
+      on screen at any zoom level. `user-scalable=no` is not an option: iOS
+      Safari ignores it, and disabling zoom on a document viewer would be wrong
+      anyway.
+    -->
+    <div id="vv-layer">
+      <header class="topbar">
       <div class="brand">
         <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M6 10V7a6 6 0 0 1 12 0v3" />
@@ -65,40 +107,9 @@
           <span>Save PDF</span>
         </button>
       </div>
-    </header>
+      </header>
 
-    <main class="stage">
-      <div class="dropzone" data-when="empty">
-        <div class="dropzone-inner">
-          <svg class="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-            <path d="M14 3v5h5" />
-          </svg>
-          <h1>Drop a PDF here</h1>
-          <p>
-            Add text, add a signature, remove either one. Everything runs on this device — there is
-            no server and nothing is uploaded.
-          </p>
-          <button type="button" class="btn btn-primary btn-lg" data-action="open">
-            Choose a PDF
-          </button>
-          <ul class="assurances">
-            <li>Works offline once loaded</li>
-            <li>Your file is never sent anywhere</li>
-            <li>Saves as standard PDF annotations</li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="viewer" id="viewer" data-when="loaded" hidden></div>
-
-      <div class="loading" id="loading" hidden>
-        <div class="spinner" aria-hidden="true"></div>
-        <p>Opening your PDF…</p>
-      </div>
-    </main>
-
-    <div class="toolbar" data-when="loaded" hidden role="toolbar" aria-label="Editing tools">
+      <div class="toolbar" data-when="loaded" hidden role="toolbar" aria-label="Editing tools">
       <button type="button" class="tool is-active" data-tool="select">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 3 7 17 2.5-6.5L20 11z" /></svg>
         <span>Select</span>
@@ -115,8 +126,9 @@
       </button>
     </div>
 
-    <div class="hint" id="hint" hidden role="status"></div>
-    <div class="toast" id="toast" hidden role="alert"></div>
+      <div class="hint" id="hint" hidden role="status"></div>
+      <div class="toast" id="toast" hidden role="alert"></div>
+    </div>
 
     <dialog class="sheet" id="sig-dialog" aria-label="Draw your signature">
       <form method="dialog" class="sheet-inner">

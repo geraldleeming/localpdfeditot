@@ -205,13 +205,30 @@ export class App {
       }, 150);
     });
 
-    // The visual viewport resizing means the on-screen keyboard opened or
-    // closed. Snap the layout viewport back so the fixed chrome cannot be left
-    // drawn in one place and clickable in another. Only `resize` — reacting to
-    // `scroll` too would fight the user mid pinch-zoom.
-    window.visualViewport?.addEventListener('resize', () => {
-      if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
-    });
+    const viewport = window.visualViewport;
+    if (viewport) {
+      // Publishes the visual viewport as CSS variables so the chrome layer can
+      // sit on it and undo the pinch zoom. Without this the toolbar magnifies
+      // with the page and slides off screen, since fixed elements are anchored
+      // to the layout viewport rather than the visible area.
+      const sync = () => {
+        // A resize also means the keyboard opened or closed. Snapping the layout
+        // viewport back keeps the chrome from being drawn in one place and
+        // clickable in another.
+        if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+        const root = document.documentElement.style;
+        root.setProperty('--vv-left', `${viewport.offsetLeft}px`);
+        root.setProperty('--vv-top', `${viewport.offsetTop}px`);
+        root.setProperty('--vv-width', `${viewport.width}px`);
+        root.setProperty('--vv-height', `${viewport.height}px`);
+        root.setProperty('--vv-inv', String(1 / viewport.scale));
+      };
+      // Scroll as well as resize: panning a zoomed page moves the visual
+      // viewport without resizing it, and the chrome has to follow.
+      viewport.addEventListener('resize', sync);
+      viewport.addEventListener('scroll', sync);
+      sync();
+    }
 
     window.addEventListener('beforeunload', (event) => {
       if (!this.docs.some((d) => d.dirty)) return;

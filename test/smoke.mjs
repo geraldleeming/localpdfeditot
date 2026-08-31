@@ -49,7 +49,10 @@ const devBase = devServer.resolvedUrls.local[0];
 const browser = await chromium.launch({ executablePath });
 
 try {
-  const context = await browser.newContext({ acceptDownloads: true });
+  // Dark mode deliberately: the interface inverts but a PDF page stays white,
+  // so anything that wrongly inherits a UI colour becomes invisible on the page
+  // exactly here and nowhere else.
+  const context = await browser.newContext({ acceptDownloads: true, colorScheme: 'dark' });
   const page = await context.newPage();
 
   const consoleErrors = [];
@@ -92,9 +95,45 @@ try {
   await page.mouse.up();
   await page.click('[data-sig="use"]');
   await page.waitForFunction(() => !document.querySelector('#sig-dialog')?.open);
+
+  // The hint sits over the page. Being a status message it must not take taps —
+  // otherwise the chip reading "tap where you want to sign" swallows exactly
+  // that tap across the middle of the screen.
+  const hintBlocks = await page.evaluate(() => {
+    const hint = document.querySelector('#hint');
+    if (!hint || hint.hidden) return false;
+    const box = hint.getBoundingClientRect();
+    const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return hint.contains(at);
+  });
+  check('the placement hint does not swallow the tap it asks for', !hintBlocks);
+
   await firstPage.click({ position: { x: 200, y: 560 } });
   await page.waitForSelector('.obj-sig');
   check('signature object created', (await page.locator('.obj-sig').count()) === 1);
+
+  const ink = await page.evaluate(() => {
+    const svg = document.querySelector('.obj-sig svg');
+    const cs = getComputedStyle(svg);
+    return {
+      stroke: cs.stroke,
+      width: parseFloat(cs.strokeWidth),
+      uiText: getComputedStyle(document.body).color,
+    };
+  });
+  // The stylesheet's `svg` rule paints icons with `stroke: currentColor`, and a
+  // CSS declaration outranks a presentation attribute — so setting the stroke
+  // as an attribute left the signature taking the interface text colour.
+  check(
+    'the signature draws in its own ink, not the interface text colour',
+    ink.stroke === 'rgb(17, 24, 39)' && ink.stroke !== ink.uiText,
+    `stroke ${ink.stroke}, interface text ${ink.uiText}`,
+  );
+  check(
+    'and at its own stroke width rather than the icon default',
+    ink.width !== 1.75,
+    `${ink.width}px`,
+  );
 
   console.log('\nSaving');
   const [download] = await Promise.all([
@@ -362,6 +401,46 @@ try {
     'a tool still responds after an edit',
     (await small.locator('.tool.is-active').getAttribute('data-tool')) === 'text',
   );
+  // Pinch zoom magnifies fixed elements along with the page and leaves them
+  // anchored to the layout viewport, so the toolbar ballooned and slid off
+  // screen. The chrome layer counter-scales; drive a real page scale to check.
+  console.log('\nChecking the chrome survives pinch zoom');
+  const cdp = await phone.newCDPSession(small);
+  const measureChrome = () =>
+    small.evaluate(() => {
+      const bar = document.querySelector('.toolbar').getBoundingClientRect();
+      const vv = window.visualViewport;
+      return {
+        visualHeight: bar.height * vv.scale,
+        bottom: bar.bottom,
+        visibleUntil: vv.offsetTop + vv.height,
+      };
+    });
+
+  const unzoomed = await measureChrome();
+  await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2.5 });
+  // Wait for the app to have reacted, not merely for the viewport to report the
+  // new scale — the two are a frame or more apart.
+  await small
+    .waitForFunction(() => {
+      const inv = getComputedStyle(document.documentElement).getPropertyValue('--vv-inv');
+      return window.visualViewport.scale > 2 && parseFloat(inv) < 0.9;
+    }, { timeout: 5000 })
+    .catch(() => {});
+  const zoomed = await measureChrome();
+
+  check(
+    'the toolbar keeps its real size when the page is zoomed',
+    Math.abs(zoomed.visualHeight - unzoomed.visualHeight) < 1,
+    `${unzoomed.visualHeight.toFixed(1)}px unzoomed vs ${zoomed.visualHeight.toFixed(1)}px zoomed`,
+  );
+  check(
+    'and stays inside the visible area rather than sliding off',
+    zoomed.bottom <= zoomed.visibleUntil + 1,
+    `bottom ${zoomed.bottom.toFixed(1)}, viewport ends ${zoomed.visibleUntil.toFixed(1)}`,
+  );
+  await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+
   await phone.close();
 
   // Structure is not proof. The app renders pages with annotations disabled and
@@ -375,7 +454,7 @@ try {
   // Sample precisely the rect the Ink annotation claims to occupy. The source
   // document draws nothing there, so any dark pixel came from our appearance
   // stream — and it lands where the annotation says it should.
-  const ink = await harness.evaluate(
+  const drawnPixels = await harness.evaluate(
     async ({ arr, rect }) => {
       const { scale, height: canvasH } = await window.renderPdf(arr);
       const canvas = document.getElementById('c');
@@ -398,7 +477,11 @@ try {
     },
     { arr: Array.from(bytes), rect: inkRect },
   );
-  check('the signature appearance stream draws inside its own rect', ink > 200, `${ink} dark pixels`);
+  check(
+    'the signature appearance stream draws inside its own rect',
+    drawnPixels > 200,
+    `${drawnPixels} dark pixels`,
+  );
 } finally {
   await browser.close();
   await server.close();
