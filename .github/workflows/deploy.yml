@@ -37,7 +37,13 @@ jobs:
       # than shipping.
       - run: npm run build
 
+      # `enablement` turns Pages on (with GitHub Actions as the source) the
+      # first time this runs, using the pages:write permission granted above.
+      # Without it the very first deploy fails on a repository where nobody has
+      # visited Settings -> Pages yet.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
