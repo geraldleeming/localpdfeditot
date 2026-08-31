@@ -34,6 +34,12 @@ export interface PlaceEvent {
 
 const MIN_FONT_SIZE = 5;
 const MAX_FONT_SIZE = 144;
+/**
+ * iOS Safari zooms the entire page when a field receives focus with a computed
+ * font size below 16px. A 12pt annotation on a phone at fit-width renders at
+ * about 7px, so tapping to add text would yank the view in every time.
+ */
+const IOS_FOCUS_ZOOM_THRESHOLD_PX = 16;
 /** Pointer travel below this is a tap, not a drag. */
 const TAP_SLOP = 4;
 
@@ -365,14 +371,23 @@ export class Overlay {
       width: metrics.width,
       height: metrics.height,
     });
+    // Rather than suppress zooming globally with `maximum-scale=1` — which
+    // would take pinch-zoom away from everyone, on a document viewer of all
+    // things — keep the real font size at the threshold and scale the element
+    // back down visually. The editor looks identical and iOS leaves it alone.
+    const fontPx = obj.size * vp.scale;
+    const shrink = fontPx < IOS_FOCUS_ZOOM_THRESHOLD_PX ? fontPx / IOS_FOCUS_ZOOM_THRESHOLD_PX : 1;
+
     editor.style.left = `${box.left}px`;
     editor.style.top = `${box.top}px`;
-    editor.style.width = `${box.width}px`;
-    editor.style.height = `${box.height}px`;
-    editor.style.fontSize = `${obj.size * vp.scale}px`;
+    editor.style.width = `${box.width / shrink}px`;
+    editor.style.height = `${box.height / shrink}px`;
+    editor.style.fontSize = `${fontPx / shrink}px`;
     editor.style.lineHeight = String(LINE_HEIGHT_RATIO);
-    editor.style.padding = `${TEXT_PADDING * vp.scale}px`;
+    editor.style.padding = `${(TEXT_PADDING * vp.scale) / shrink}px`;
     editor.style.color = cssColor(obj);
+    editor.style.transformOrigin = '0 0';
+    editor.style.transform = shrink === 1 ? 'none' : `scale(${shrink})`;
   }
 
   private repositionEditor(): void {

@@ -1,9 +1,12 @@
 import {
+  PDFDict,
   PDFDocument,
   PDFHexString,
+  PDFName,
   PDFString,
   StandardFonts,
   type PDFContext,
+  type PDFPage,
   type PDFRef,
 } from 'pdf-lib';
 
@@ -61,6 +64,14 @@ export async function exportPdf(
   const needsFont = objects.some((o) => o.kind === 'text');
   const fontRef = needsFont ? (await doc.embedFont(StandardFonts.Helvetica)).ref : null;
 
+  // Drop the annotations this app manages before writing the current set. On
+  // load these are hydrated into the journal, so appending to them would write
+  // a second copy of everything on every save-reopen-save cycle — and deleting
+  // a hydrated object would never actually remove it from the file. The journal
+  // is the single source of truth for FreeText and Ink; every other annotation
+  // type in the document is left exactly as it was.
+  for (const page of pages) removeManagedAnnotations(page);
+
   for (const obj of objects) {
     const page = pages[obj.page];
     if (!page) continue;
@@ -78,6 +89,20 @@ export async function exportPdf(
 // ---------------------------------------------------------------------------
 // Writing
 // ---------------------------------------------------------------------------
+
+/** The annotation subtypes this app owns — the ones `annotationsToObjects` adopts. */
+const MANAGED_SUBTYPES = new Set(['/FreeText', '/Ink']);
+
+function removeManagedAnnotations(page: PDFPage): void {
+  const annots = page.node.Annots();
+  if (!annots) return;
+  // Backwards, because removing shifts every later index down.
+  for (let i = annots.size() - 1; i >= 0; i--) {
+    const dict = annots.lookupMaybe(i, PDFDict);
+    const subtype = dict?.get(PDFName.of('Subtype'))?.toString();
+    if (subtype && MANAGED_SUBTYPES.has(subtype)) annots.remove(i);
+  }
+}
 
 /**
  * The appearance form's `/BBox` is set equal to the annotation `/Rect` with an

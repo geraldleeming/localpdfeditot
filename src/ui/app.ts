@@ -7,9 +7,13 @@ import type { Overlay, PlaceEvent, Tool } from './overlay.ts';
 import { SignaturePad, type SignatureResult } from './signature-pad.ts';
 
 /**
- * Wiring. Holds no document state of its own beyond the open file: the journal
- * owns the edits, the viewer owns the rendering, and this module connects the
- * two to the chrome.
+ * Wiring. The journal owns the edits, the viewer owns the rendering, and this
+ * module connects the two to the chrome.
+ *
+ * Several documents can be open at once. Each one keeps its own edits, so
+ * switching between them is not a reload — you go back to a PDF exactly as you
+ * left it. Only the active document's edits live in the journal; the rest are
+ * stashed on their entry and restored on switch.
  *
  * pdf.js and pdf-lib together are most of this app's weight, and neither is
  * needed until a file exists. They load on the first open, behind a spinner, so
@@ -30,6 +34,16 @@ interface Engine {
   annotations: typeof import('../core/annotations.ts');
 }
 
+interface DocEntry {
+  id: string;
+  name: string;
+  /** The file itself. Blobs are disk-backed, so holding several is cheap. */
+  blob: Blob;
+  /** Edits, stashed while inactive. `null` until the file's own annotations are read. */
+  objects: EditObj[] | null;
+  dirty: boolean;
+}
+
 export class App {
   private readonly journal = new Journal();
   private readonly pad: SignaturePad;
@@ -37,11 +51,13 @@ export class App {
   private engine: Engine | null = null;
   private enginePromise: Promise<Engine> | null = null;
 
-  private file: Blob | null = null;
-  private fileName = 'document.pdf';
+  private docs: DocEntry[] = [];
+  private activeId: string | null = null;
+  /** Suppresses the dirty flag while a document is being loaded into the journal. */
+  private switching = false;
+
   private tool: Tool = 'select';
   private pendingSignature: SignatureResult | null = null;
-  private dirty = false;
   private toastTimer: number | undefined;
 
   private readonly els = {
@@ -56,6 +72,9 @@ export class App {
     undo: must<HTMLButtonElement>('[data-action="undo"]'),
     redo: must<HTMLButtonElement>('[data-action="redo"]'),
     save: must<HTMLButtonElement>('[data-action="save"]'),
+    filesName: must<HTMLElement>('#files-name'),
+    filesDialog: must<HTMLDialogElement>('#files-dialog'),
+    docList: must<HTMLUListElement>('#doc-list'),
   };
 
   constructor() {
@@ -64,15 +83,20 @@ export class App {
 
   start(): void {
     this.journal.subscribe(() => {
-      this.dirty = !this.journal.isEmpty;
       this.els.undo.disabled = !this.journal.canUndo;
       this.els.redo.disabled = !this.journal.canRedo;
+      const doc = this.activeDoc;
+      if (doc && !this.switching) doc.dirty = true;
     });
 
     this.bindChrome();
     this.bindFileInput();
     this.bindDragAndDrop();
     this.bindShortcuts();
+  }
+
+  private get activeDoc(): DocEntry | undefined {
+    return this.docs.find((d) => d.id === this.activeId);
   }
 
   // -------------------------------------------------------------------------
@@ -110,7 +134,12 @@ export class App {
         const engine = this.engine;
         switch (el.dataset['action']) {
           case 'open':
+            this.els.filesDialog.close();
             this.els.fileInput.click();
+            break;
+          case 'files':
+            this.renderDocList();
+            this.els.filesDialog.showModal();
             break;
           case 'save':
             void this.save();
@@ -136,6 +165,10 @@ export class App {
       });
     }
 
+    for (const el of this.els.filesDialog.querySelectorAll<HTMLElement>('[data-files="close"]')) {
+      el.addEventListener('click', () => this.els.filesDialog.close());
+    }
+
     for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) {
       el.addEventListener('click', () => this.setTool(el.dataset['tool'] as Tool));
     }
@@ -144,7 +177,7 @@ export class App {
     // reader pinch-zooming after every orientation change.
     let resizeTimer: number | undefined;
     window.addEventListener('resize', () => {
-      if (!this.file) return;
+      if (!this.activeDoc) return;
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
         this.engine?.viewer.fitWidth();
@@ -153,7 +186,7 @@ export class App {
     });
 
     window.addEventListener('beforeunload', (event) => {
-      if (!this.dirty) return;
+      if (!this.docs.some((d) => d.dirty)) return;
       event.preventDefault();
       event.returnValue = '';
     });
@@ -162,7 +195,7 @@ export class App {
   private bindFileInput(): void {
     this.els.fileInput.addEventListener('change', () => {
       const file = this.els.fileInput.files?.[0];
-      if (file) void this.load(file, file.name);
+      if (file) void this.openFile(file, file.name);
       this.els.fileInput.value = '';
     });
   }
@@ -186,7 +219,7 @@ export class App {
         this.toast('That file is not a PDF.', true);
         return;
       }
-      void this.load(file, file.name);
+      void this.openFile(file, file.name);
     });
   }
 
@@ -201,7 +234,7 @@ export class App {
         event.preventDefault();
         if (event.shiftKey) this.journal.redo();
         else this.journal.undo();
-      } else if (key === 's' && this.file) {
+      } else if (key === 's' && this.activeDoc) {
         event.preventDefault();
         void this.save();
       }
@@ -209,11 +242,28 @@ export class App {
   }
 
   // -------------------------------------------------------------------------
-  // Document lifecycle
+  // Documents
   // -------------------------------------------------------------------------
 
-  private async load(blob: Blob, name: string): Promise<void> {
+  private async openFile(blob: Blob, name: string): Promise<void> {
+    // Re-picking a file that is already open should switch to it, keeping its
+    // edits, rather than silently starting a second copy alongside them.
+    const existing = this.docs.find((d) => d.name === name && d.blob.size === blob.size);
+    if (existing) {
+      await this.activate(existing);
+      return;
+    }
+    const entry: DocEntry = { id: newId('d'), name, blob, objects: null, dirty: false };
+    this.docs.push(entry);
+    await this.activate(entry);
+  }
+
+  private async activate(entry: DocEntry): Promise<void> {
+    if (this.activeId === entry.id) return;
+
+    this.stashActive();
     this.els.loading.hidden = false;
+    this.switching = true;
     try {
       const engine = await this.loadEngine();
       this.journal.reset([]);
@@ -222,31 +272,133 @@ export class App {
       // wrong and the IntersectionObserver would never fire. The loading
       // overlay covers it in the meantime.
       this.showDocument(true);
-      await engine.viewer.open(blob);
+      await engine.viewer.open(entry.blob);
 
-      // Adopt the FreeText and Ink annotations already in the file so that text
-      // and signatures added in a previous session — or in another PDF app —
-      // can be moved and removed here too.
-      const existing: EditObj[] = [];
-      for (const { page, annots } of await engine.viewer.readAnnotations()) {
-        existing.push(...engine.annotations.annotationsToObjects(page, annots));
+      if (entry.objects === null) {
+        // Adopt the FreeText and Ink annotations already in the file so that
+        // text and signatures added in a previous session — or in another PDF
+        // app — can be moved and removed here too. Only on first open: after
+        // that the entry's own edits are the truth, deletions included.
+        const hydrated: EditObj[] = [];
+        for (const { page, annots } of await engine.viewer.readAnnotations()) {
+          hydrated.push(...engine.annotations.annotationsToObjects(page, annots));
+        }
+        entry.objects = hydrated;
       }
-      this.journal.reset(existing);
 
-      this.file = blob;
-      this.fileName = name;
-      this.dirty = false;
-      this.showDocument(true);
+      this.activeId = entry.id;
+      this.journal.reset(entry.objects);
       this.setTool('select');
+      this.updateChrome();
       this.updateZoomLabel();
       engine.overlay.render();
     } catch (err) {
       console.error(err);
-      this.file = null;
-      this.showDocument(false);
+      this.docs = this.docs.filter((d) => d.id !== entry.id);
+      this.activeId = null;
+      if (this.docs.length === 0) this.showDocument(false);
+      this.updateChrome();
       this.toast(this.describeError(err, 'That PDF could not be opened.'), true);
     } finally {
+      this.switching = false;
       this.els.loading.hidden = true;
+    }
+  }
+
+  /** Move the active document's edits out of the journal and onto its entry. */
+  private stashActive(): void {
+    const doc = this.activeDoc;
+    if (!doc) return;
+    this.engine?.overlay.commitEdit();
+    doc.objects = [...this.journal.all()];
+  }
+
+  private async closeDoc(entry: DocEntry): Promise<void> {
+    if (entry.dirty && !confirm(`Close “${entry.name}”? Unsaved edits will be lost.`)) return;
+
+    const index = this.docs.findIndex((d) => d.id === entry.id);
+    if (index < 0) return;
+    this.docs.splice(index, 1);
+
+    if (entry.id !== this.activeId) {
+      this.renderDocList();
+      return;
+    }
+
+    this.activeId = null;
+    const next = this.docs[index] ?? this.docs[index - 1];
+    if (next) {
+      await this.activate(next);
+    } else {
+      this.engine?.viewer.close();
+      this.journal.reset([]);
+      this.showDocument(false);
+      this.updateChrome();
+      this.els.filesDialog.close();
+    }
+    this.renderDocList();
+  }
+
+  private renderDocList(): void {
+    const list = this.els.docList;
+    list.replaceChildren();
+
+    if (this.docs.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'doc-empty';
+      empty.textContent = 'No PDFs open yet.';
+      list.append(empty);
+      return;
+    }
+
+    for (const doc of this.docs) {
+      const item = document.createElement('li');
+      item.className = 'doc-item';
+      item.classList.toggle('is-active', doc.id === this.activeId);
+
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'doc-pick';
+      pick.innerHTML =
+        '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+        '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>' +
+        '<path d="M14 3v5h5"/></svg>';
+
+      const text = document.createElement('span');
+      text.className = 'doc-text';
+
+      const name = document.createElement('span');
+      name.className = 'doc-name';
+      name.textContent = doc.name;
+
+      const meta = document.createElement('span');
+      meta.className = 'doc-meta';
+      const count = (doc.id === this.activeId ? this.journal.all().length : doc.objects?.length) ?? 0;
+      meta.textContent = `${count} ${count === 1 ? 'item' : 'items'}`;
+      if (doc.dirty) {
+        const flag = document.createElement('span');
+        flag.className = 'is-unsaved';
+        flag.textContent = ' · unsaved';
+        meta.append(flag);
+      }
+
+      text.append(name, meta);
+      pick.append(text);
+      pick.addEventListener('click', () => {
+        this.els.filesDialog.close();
+        void this.activate(doc);
+      });
+
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'doc-close';
+      close.setAttribute('aria-label', `Close ${doc.name}`);
+      close.innerHTML =
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+      close.addEventListener('click', () => void this.closeDoc(doc));
+
+      item.append(pick, close);
+      list.append(item);
     }
   }
 
@@ -254,11 +406,22 @@ export class App {
     for (const el of document.querySelectorAll<HTMLElement>('[data-when]')) {
       el.hidden = el.dataset['when'] === 'loaded' ? !loaded : loaded;
     }
+    document.body.classList.toggle('has-doc', loaded);
+  }
+
+  private updateChrome(): void {
+    const doc = this.activeDoc;
+    this.els.filesName.textContent = doc
+      ? this.docs.length > 1
+        ? `${doc.name} (${this.docs.length})`
+        : doc.name
+      : 'No file';
   }
 
   private async save(): Promise<void> {
     const engine = this.engine;
-    if (!this.file || !engine) return;
+    const doc = this.activeDoc;
+    if (!doc || !engine) return;
     engine.overlay.commitEdit();
 
     const objects = this.journal.all();
@@ -268,10 +431,10 @@ export class App {
       // Re-read from the Blob rather than keeping a second copy in memory:
       // pdf.js detached the buffer it was given, and a phone editing a 40 MB
       // scan cannot afford to hold the file twice.
-      const original = new Uint8Array(await this.file.arrayBuffer());
+      const original = new Uint8Array(await doc.blob.arrayBuffer());
       const bytes = await engine.annotations.exportPdf(original, objects);
-      downloadPdf(bytes, exportName(this.fileName));
-      this.dirty = false;
+      downloadPdf(bytes, exportName(doc.name));
+      doc.dirty = false;
 
       const substituted = objects.some(
         (o) => o.kind === 'text' && engine.metrics.hasUnsupportedChars(o.value),

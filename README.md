@@ -38,6 +38,12 @@ makes "nothing is uploaded" checkable rather than merely claimed.
 Then re-run the latest workflow from the Actions tab, or push again. The site lands at
 `https://<user>.github.io/<repo>/`.
 
+The **first** deployment usually 404s for a few minutes after the workflow goes green — Pages
+reports success before the site is actually being served. Later deploys are immediate.
+
+`404.html` is written at build time as a copy of the built `index.html`, so a mistyped or stale URL
+under the site opens the app rather than GitHub's error page.
+
 Two things make a project site work, and both are covered by `npm test`:
 
 - Vite is configured with `base: './'`, so assets resolve from a subdirectory rather than the domain
@@ -63,6 +69,10 @@ Four actions, which are really two:
 "Remove" applies to objects **you added** — in this session, in a previous one, or in another PDF
 app. It does not delete text that is baked into the page's content stream; see
 [Limitations](#limitations).
+
+Several PDFs can be open at once. The button in the header opens a list to switch between them; each
+keeps its own edits, so coming back to a document finds it exactly as you left it. Only the active
+document's edits live in the journal — the rest are stashed on their entry and restored on switch.
 
 ## How it works
 
