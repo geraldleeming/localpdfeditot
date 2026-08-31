@@ -277,6 +277,41 @@ try {
     fit.box + 0.5 >= fit.needed,
     `box ${fit.box.toFixed(1)}px, text needs ${fit.needed.toFixed(1)}px`,
   );
+  // After the keyboard has been up, the chrome must still be where it looks.
+  // The failure this guards is iOS scrolling the window to reveal the field and
+  // leaving it there: buttons render in one place and receive taps in another,
+  // which reads as the interface having frozen. Hit-testing each control's own
+  // centre is the only check that actually catches that.
+  const chrome = await small.evaluate(() => {
+    const receivesTaps = (selector) => {
+      const el = document.querySelector(selector);
+      if (!el) return false;
+      const box = el.getBoundingClientRect();
+      const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return el.contains(at);
+    };
+    const root = document.documentElement;
+    return {
+      documentScrolls: root.scrollHeight > root.clientHeight + 1,
+      windowScrolled: window.scrollY,
+      save: receivesTaps('[data-action="save"]'),
+      files: receivesTaps('[data-action="files"]'),
+      text: receivesTaps('[data-tool="text"]'),
+      sign: receivesTaps('[data-tool="sign"]'),
+    };
+  });
+  check('the document itself cannot scroll', !chrome.documentScrolls);
+  check('the window is not left scrolled after typing', chrome.windowScrolled === 0, `${chrome.windowScrolled}px`);
+  check('Save receives taps where it is drawn', chrome.save);
+  check('the file switcher receives taps where it is drawn', chrome.files);
+  check('the Text and Sign tools receive taps where they are drawn', chrome.text && chrome.sign);
+
+  // And they must actually do something afterwards.
+  await small.click('[data-tool="text"]');
+  check(
+    'a tool still responds after an edit',
+    (await small.locator('.tool.is-active').getAttribute('data-tool')) === 'text',
+  );
   await phone.close();
 
   // Structure is not proof. The app renders pages with annotations disabled and

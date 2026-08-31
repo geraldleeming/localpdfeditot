@@ -185,6 +185,14 @@ export class App {
       }, 150);
     });
 
+    // The visual viewport resizing means the on-screen keyboard opened or
+    // closed. Snap the layout viewport back so the fixed chrome cannot be left
+    // drawn in one place and clickable in another. Only `resize` — reacting to
+    // `scroll` too would fight the user mid pinch-zoom.
+    window.visualViewport?.addEventListener('resize', () => {
+      if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+    });
+
     window.addEventListener('beforeunload', (event) => {
       if (!this.docs.some((d) => d.dirty)) return;
       event.preventDefault();

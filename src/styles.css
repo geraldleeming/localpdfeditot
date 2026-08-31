@@ -59,7 +59,23 @@ body {
   height: 100%;
 }
 
+/**
+ * The document itself must never scroll. iOS scrolls the window to reveal a
+ * focused field when the keyboard opens and does not reliably undo it, which
+ * leaves the fixed chrome painted against a displaced layout viewport — the top
+ * bar off-screen and every button's hit area somewhere other than where it is
+ * drawn. Pinning the body removes the thing iOS was scrolling; only .viewer
+ * scrolls, and it is a real overflow container.
+ *
+ * Laying the shell out as a flex column also retires the `100dvh` arithmetic,
+ * which was its own hazard: dvh does not account for the keyboard on iOS.
+ */
 body {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   margin: 0;
   font-family: var(--font);
   font-size: 14px;
@@ -166,8 +182,7 @@ button:disabled {
 --------------------------------------------------------------------------- */
 
 .topbar {
-  position: sticky;
-  top: 0;
+  flex: none;
   z-index: 30;
   height: var(--topbar-h);
   padding: 0 14px;
@@ -244,7 +259,10 @@ button:disabled {
 
 .stage {
   position: relative;
-  height: calc(100dvh - var(--topbar-h) - env(safe-area-inset-top));
+  flex: 1;
+  /* Without this a flex item refuses to shrink below its content, so the
+     viewer would push the shell taller than the screen. */
+  min-height: 0;
 }
 
 .viewer {

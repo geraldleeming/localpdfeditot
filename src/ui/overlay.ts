@@ -145,6 +145,11 @@ export class Overlay {
     const pageEl = target.closest<HTMLElement>('.page');
 
     if (!pageEl) {
+      // Reaching for a tool finishes whatever was being typed. Blur would
+      // usually do this, but ordering it here makes it deterministic — the
+      // journal is up to date before the button's own handler runs. Nothing
+      // calls preventDefault, so the tap still reaches the button.
+      this.commitEdit();
       // Clicking the chrome or the empty gutter dismisses the selection, but a
       // click on a toolbar button must still reach that button.
       if (!target.closest('.toolbar, .topbar, .sheet, .hint, .toast')) this.select(null);
@@ -414,6 +419,8 @@ export class Overlay {
     const value = editor.value;
     editor.remove();
 
+    releaseKeyboardScroll();
+
     const obj = this.journal.get(id);
     if (obj?.kind !== 'text') return;
 
@@ -441,6 +448,7 @@ export class Overlay {
     this.editor = null;
     this.editingId = null;
     editor.remove();
+    releaseKeyboardScroll();
     const obj = this.journal.get(id);
     if (obj?.kind === 'text' && obj.value.trim() === '') this.journal.remove(id);
     else this.render();
@@ -513,6 +521,18 @@ function resizeHandle(): HTMLButtonElement {
   btn.className = 'handle handle-resize';
   btn.setAttribute('aria-label', 'Resize');
   return btn;
+}
+
+/**
+ * Undo any window scroll iOS performed to reveal the keyboard.
+ *
+ * The body is pinned so this should be a no-op, but Safari has been known to
+ * offset the layout viewport anyway. Left uncorrected it strands the fixed top
+ * bar and tool bar: they render in one place and receive taps in another, which
+ * reads as the whole interface having stopped responding.
+ */
+function releaseKeyboardScroll(): void {
+  if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
 }
 
 function cssColor({ color }: { color: { r: number; g: number; b: number } }): string {
