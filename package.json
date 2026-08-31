@@ -1,0 +1,24 @@
+{
+  "name": "local-pdf-editor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A PDF editor that runs entirely in your browser. No server, no uploads.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "fixture": "node test/make-fixture.mjs",
+    "test": "npm run fixture && vite build && node test/smoke.mjs"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.3.289"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}
