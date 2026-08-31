@@ -17,12 +17,16 @@ npm test           # end-to-end smoke test in Chromium
 ## Deploying to GitHub Pages
 
 `.github/workflows/deploy.yml` builds and publishes on every push to the default branch. One manual
-step is needed first, because a workflow cannot enable Pages for you:
+step is needed first, exactly once:
 
 > **Settings → Pages → Build and deployment → Source: GitHub Actions**
 
-Then push, or run the workflow from the Actions tab. The site lands at
-`https://<user>.github.io/<repo>/`.
+A workflow genuinely cannot do this for you. `actions/configure-pages` has an `enablement: true`
+option that looks like it should, but the default `GITHUB_TOKEN` is not permitted to create a Pages
+site and fails with "Resource not accessible by integration".
+
+After flipping that setting, re-run the latest workflow from the Actions tab (or push again). The
+site lands at `https://<user>.github.io/<repo>/`.
 
 Two things make a project site work, and both are covered by `npm test`:
 
