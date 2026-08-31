@@ -22,7 +22,14 @@ import { SignaturePad, type SignatureResult } from './signature-pad.ts';
  */
 
 /** What new text should measure on screen, in CSS pixels. */
-const TARGET_ON_SCREEN_PX = 16;
+const TARGET_ON_SCREEN_PX = 20;
+/**
+ * Point-size bounds. The ceiling has to be generous: a phone showing a whole A4
+ * page needs around 32pt to reach the target on screen, so a tighter cap would
+ * silently override the target and leave the text small.
+ */
+const MIN_FONT_PT = 14;
+const MAX_FONT_PT = 40;
 
 /**
  * New text is sized to be legible at the current zoom, not to a fixed point
@@ -33,7 +40,7 @@ const TARGET_ON_SCREEN_PX = 16;
  * clamp keeps it a plausible annotation size at either extreme.
  */
 function defaultFontSize(viewportScale: number): number {
-  return Math.round(clamp(TARGET_ON_SCREEN_PX / viewportScale, 14, 28));
+  return Math.round(clamp(TARGET_ON_SCREEN_PX / viewportScale, MIN_FONT_PT, MAX_FONT_PT));
 }
 /** Roughly 2.2 inches — a natural signature width on a letter/A4 page. */
 const DEFAULT_SIGNATURE_WIDTH = 160;

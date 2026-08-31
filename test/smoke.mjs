@@ -241,9 +241,11 @@ try {
   // Above the threshold no compensation is needed; below it the element is
   // scaled back down. What matters either way is that the user sees the real
   // text size, so assert that rather than the mechanism used to achieve it.
+  // Guards the clamp as much as the target: a tight point-size ceiling would
+  // quietly cap this well below what was asked for.
   check(
     'new text is large enough to read on a phone',
-    editor.onScreen >= 14,
+    editor.onScreen >= 19,
     `${editor.onScreen.toFixed(1)}px on screen`,
   );
   // Text must never be clipped. The box is measured with Helvetica's own
