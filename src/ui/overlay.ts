@@ -378,9 +378,15 @@ export class Overlay {
     const fontPx = obj.size * vp.scale;
     const shrink = fontPx < IOS_FOCUS_ZOOM_THRESHOLD_PX ? fontPx / IOS_FOCUS_ZOOM_THRESHOLD_PX : 1;
 
+    // Slack of roughly one character: the measurement is Helvetica's, the
+    // rendering is the device's substitute for it, and the caret needs somewhere
+    // to sit past the last glyph. Without it the character being typed can end
+    // up under the right edge.
+    const slack = fontPx * 0.8;
+
     editor.style.left = `${box.left}px`;
     editor.style.top = `${box.top}px`;
-    editor.style.width = `${box.width / shrink}px`;
+    editor.style.width = `${(box.width + slack) / shrink}px`;
     editor.style.height = `${box.height / shrink}px`;
     editor.style.fontSize = `${fontPx / shrink}px`;
     editor.style.lineHeight = String(LINE_HEIGHT_RATIO);

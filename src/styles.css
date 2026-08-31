@@ -348,6 +348,11 @@ button:disabled {
   font-family: Helvetica, Arial, sans-serif;
   color: #000;
   line-height: 1.2;
+  /* The box is sized from Helvetica's real AFM widths so it matches the PDF
+     exactly, but the browser renders with whatever Helvetica substitute the
+     device has. Where that is wider, the box grows to contain it rather than
+     letting glyphs sit outside the selection outline. */
+  min-width: max-content;
 }
 
 .obj-sig svg {
@@ -370,7 +375,10 @@ button:disabled {
   font-family: Helvetica, Arial, sans-serif;
   line-height: 1.2;
   white-space: pre;
-  overflow: hidden;
+  /* Never clip what someone is typing. The box is measured from Helvetica's
+     metrics, so on a device whose substitute font is wider, `hidden` would make
+     characters vanish at the right edge as they were entered. */
+  overflow: visible;
   resize: none;
   outline: none;
   touch-action: manipulation;

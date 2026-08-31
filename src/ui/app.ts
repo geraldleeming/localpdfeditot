@@ -433,16 +433,21 @@ export class App {
       // scan cannot afford to hold the file twice.
       const original = new Uint8Array(await doc.blob.arrayBuffer());
       const bytes = await engine.annotations.exportPdf(original, objects);
-      downloadPdf(bytes, exportName(doc.name));
+
+      const outcome = await deliverPdf(bytes, exportName(doc.name));
+      // Dismissing the share sheet is a decision, not a save. Leave the
+      // document dirty and say nothing.
+      if (outcome === 'cancelled') return;
       doc.dirty = false;
 
+      const where = outcome === 'shared' ? 'Saved.' : 'Saved to your downloads.';
       const substituted = objects.some(
         (o) => o.kind === 'text' && engine.metrics.hasUnsupportedChars(o.value),
       );
       this.toast(
         substituted
-          ? 'Saved. Some characters are not available in Helvetica and were replaced.'
-          : 'Saved to your downloads.',
+          ? `${where} Some characters are not available in Helvetica and were replaced.`
+          : where,
       );
     } catch (err) {
       console.error(err);
@@ -592,7 +597,34 @@ function exportName(original: string): string {
   return `${original.replace(/\.pdf$/i, '')}-edited.pdf`;
 }
 
-function downloadPdf(bytes: Uint8Array, filename: string): void {
+type Delivery = 'shared' | 'downloaded' | 'cancelled';
+
+/**
+ * Hand the finished PDF to the user.
+ *
+ * iOS Safari ignores the `download` attribute on a blob URL: it navigates to
+ * the blob instead, so "Save" opened the PDF in a viewer with no obvious way to
+ * keep it. The Web Share API is the platform's real file-saving affordance and
+ * is where "Save to Files" lives, so it is tried first wherever the browser can
+ * share a file.
+ *
+ * The fallback still matters. Desktop browsers mostly cannot share files, and
+ * iOS requires the share sheet to open under a still-live user gesture — which
+ * a slow export can outlast. Either way the anchor download takes over.
+ */
+async function deliverPdf(bytes: Uint8Array, filename: string): Promise<Delivery> {
+  const file = new File([bytes as BlobPart], filename, { type: 'application/pdf' });
+
+  if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: filename });
+      return 'shared';
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return 'cancelled';
+      // Anything else — an expired gesture most likely — falls through.
+    }
+  }
+
   const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -604,6 +636,7 @@ function downloadPdf(bytes: Uint8Array, filename: string): void {
   // Revoking immediately can cancel the download in Safari; give the
   // navigation time to start.
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return 'downloaded';
 }
 
 function clamp(n: number, min: number, max: number): number {

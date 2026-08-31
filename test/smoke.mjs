@@ -242,6 +242,41 @@ try {
     editor.transform !== 'none' && editor.width < 90,
     `transform ${editor.transform}, rendered ${editor.width.toFixed(1)}px wide`,
   );
+  // Text must never be clipped. The box is measured with Helvetica's own
+  // metrics, but the device renders with whatever substitute it has, so the
+  // editor must not hide characters as they are typed and the committed box
+  // must grow to contain what was actually drawn.
+  await small.keyboard.type('Test values that run long');
+  await small.waitForFunction(() => {
+    const el = document.querySelector('.obj-editor');
+    return el && el.value.endsWith('long');
+  });
+  const clippedWhileTyping = await small.evaluate(() => {
+    const el = document.querySelector('.obj-editor');
+    return el.scrollWidth - el.clientWidth;
+  });
+  check('nothing is clipped while typing', clippedWhileTyping === 0, `${clippedWhileTyping}px hidden`);
+
+  await small.keyboard.press('Control+Enter');
+  await small.waitForSelector('.obj-text');
+  await small.keyboard.press('Escape'); // drop the selection handles before measuring
+
+  const fit = await small.evaluate(() => {
+    const el = document.querySelector('.obj-text');
+    const range = document.createRange();
+    range.selectNodeContents(el.firstChild);
+    const cs = getComputedStyle(el);
+    const needed =
+      range.getBoundingClientRect().width +
+      parseFloat(cs.paddingLeft) +
+      parseFloat(cs.paddingRight);
+    return { box: el.getBoundingClientRect().width, needed };
+  });
+  check(
+    'the committed box contains the rendered text',
+    fit.box + 0.5 >= fit.needed,
+    `box ${fit.box.toFixed(1)}px, text needs ${fit.needed.toFixed(1)}px`,
+  );
   await phone.close();
 
   // Structure is not proof. The app renders pages with annotations disabled and
