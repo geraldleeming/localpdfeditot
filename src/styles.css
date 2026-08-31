@@ -82,11 +82,18 @@ body {
   background: var(--bg);
   -webkit-text-size-adjust: 100%;
   overscroll-behavior: none;
-  /* Drops double-tap-to-zoom across the whole app while leaving panning and
-     pinch-zoom intact. Placing a signature or text is a tap-driven flow, and a
-     stray second tap zooming the page interrupts it. Set on the body so it
-     covers the sheets and gutters too, not just the pages. */
-  touch-action: manipulation;
+  /*
+   * Panning only. This withholds both double-tap zoom and pinch zoom from the
+   * browser across the whole app.
+   *
+   * Pinch is handled by the viewer instead, as document zoom. The browser's own
+   * version magnifies the rasterised page — so the PDF goes blurry — and leaves
+   * fixed elements anchored to the layout viewport, which is what sent the
+   * toolbar drifting and then off screen. Re-rendering through pdf.js at the new
+   * scale keeps the page sharp and leaves the browser viewport, and therefore
+   * the chrome, completely still.
+   */
+  touch-action: pan-x pan-y;
 }
 
 svg {
@@ -298,6 +305,9 @@ button:disabled {
 .viewer {
   height: 100%;
   overflow: auto;
+  /* Scrolling yes, browser zoom no — the viewer implements pinch itself so the
+     page can be re-rendered at the new scale instead of being magnified. */
+  touch-action: pan-x pan-y;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   background: var(--bg-sunken);
@@ -314,9 +324,6 @@ button:disabled {
   background: #fff;
   border-radius: 3px;
   box-shadow: var(--shadow-md);
-  /* Keeps pinch-zoom but drops double-tap-to-zoom, which otherwise fires while
-     placing text and fights the tap that was meant to position it. */
-  touch-action: manipulation;
   /* Until the canvas lands, a plain white block stands in — a striped skeleton
      flickers badly when pages scroll past faster than they render. */
   transition: box-shadow 0.2s;
@@ -973,6 +980,16 @@ button:disabled {
 
   .zoom,
   .history {
+    display: none;
+  }
+
+  /* Pinching is the only way to zoom on a phone, so the way back has to appear
+     once it has been used. Tapping the percentage returns to fit-width. */
+  body.is-zoomed .zoom {
+    display: flex;
+  }
+
+  body.is-zoomed .brand {
     display: none;
   }
 

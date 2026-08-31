@@ -37,6 +37,9 @@ mkdirSync(resolve(here, 'fixtures'), { recursive: true });
 for (const [name, title, pages] of [
   ['sample.pdf', 'Sample document', 3],
   ['second.pdf', 'Second document', 2],
+  // Roughly the size of a real journal volume. Opening used to make two
+  // sequential worker round-trips per page, which this makes measurable.
+  ['large.pdf', 'Large document', 300],
 ]) {
   const out = resolve(here, 'fixtures', name);
   writeFileSync(out, await build(title, pages));

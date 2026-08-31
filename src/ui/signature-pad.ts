@@ -43,6 +43,7 @@ export class SignaturePad {
   private strokes: Pt[][] = [];
   private active: Pt[] | null = null;
   private pointerId: number | null = null;
+  private padOrigin: DOMRect | null = null;
   private ink = '#111827';
   private resolve: ((result: SignatureResult | null) => void) | null = null;
 
@@ -118,6 +119,7 @@ export class SignaturePad {
     if (this.pointerId !== null) return;
     event.preventDefault();
     this.pointerId = event.pointerId;
+    this.padOrigin = this.canvas.getBoundingClientRect();
     this.canvas.setPointerCapture(event.pointerId);
     this.active = [this.toLocal(event)];
     this.strokes.push(this.active);
@@ -220,9 +222,15 @@ export class SignaturePad {
     }
   }
 
+  /**
+   * Uses the origin captured when the stroke began rather than measuring per
+   * point. `getBoundingClientRect` forces layout, and with coalesced events
+   * this runs hundreds of times a second on the one path that has to stay
+   * smooth. The pad cannot move mid-stroke, so a cached origin is exact.
+   */
   private toLocal(event: PointerEvent | { clientX: number; clientY: number }): Pt {
-    const rect = this.canvas.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const origin = this.padOrigin ?? this.canvas.getBoundingClientRect();
+    return { x: event.clientX - origin.left, y: event.clientY - origin.top };
   }
 
   private clear(): void {

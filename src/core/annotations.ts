@@ -5,9 +5,9 @@ import {
   PDFName,
   PDFString,
   StandardFonts,
+  PDFRef,
   type PDFContext,
   type PDFPage,
-  type PDFRef,
 } from 'pdf-lib';
 
 import { displayBox, rotationAboutCentre } from './geometry.ts';
@@ -70,7 +70,7 @@ export async function exportPdf(
   // a hydrated object would never actually remove it from the file. The journal
   // is the single source of truth for FreeText and Ink; every other annotation
   // type in the document is left exactly as it was.
-  for (const page of pages) removeManagedAnnotations(page);
+  for (const page of pages) removeManagedAnnotations(page, ctx);
 
   for (const obj of objects) {
     const page = pages[obj.page];
@@ -93,14 +93,28 @@ export async function exportPdf(
 /** The annotation subtypes this app owns — the ones `annotationsToObjects` adopts. */
 const MANAGED_SUBTYPES = new Set(['/FreeText', '/Ink']);
 
-function removeManagedAnnotations(page: PDFPage): void {
+function removeManagedAnnotations(page: PDFPage, context: PDFContext): void {
   const annots = page.node.Annots();
   if (!annots) return;
   // Backwards, because removing shifts every later index down.
   for (let i = annots.size() - 1; i >= 0; i--) {
     const dict = annots.lookupMaybe(i, PDFDict);
-    const subtype = dict?.get(PDFName.of('Subtype'))?.toString();
-    if (subtype && MANAGED_SUBTYPES.has(subtype)) annots.remove(i);
+    if (!dict) continue;
+    const subtype = dict.get(PDFName.of('Subtype'))?.toString();
+    if (!subtype || !MANAGED_SUBTYPES.has(subtype)) continue;
+
+    // Dropping the array entry alone leaves the annotation and its appearance
+    // stream in the file as unreferenced objects, and pdf-lib writes every
+    // object it holds. Each save-reopen-save cycle would otherwise add a dead
+    // copy of every annotation, growing the file without bound.
+    const ref = annots.get(i);
+    const appearance = dict.get(PDFName.of('AP'));
+    if (appearance instanceof PDFDict) {
+      const normal = appearance.get(PDFName.of('N'));
+      if (normal instanceof PDFRef) context.delete(normal);
+    }
+    if (ref instanceof PDFRef) context.delete(ref);
+    annots.remove(i);
   }
 }
 

@@ -34,6 +34,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const MAX_CANVAS_PIXELS = 8_000_000;
 /** Rendering above 2x is invisible on a phone and quadruples memory. */
 const MAX_DPR = 2;
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 6;
 /** How far outside the viewport to keep pages rendered. */
 const RENDER_MARGIN = '150% 0px';
 /**
@@ -72,8 +74,84 @@ export class Viewer {
   private zoom = 1;
   private baseScale = 1;
   private layoutListeners = new Set<() => void>();
+  private zoomListeners = new Set<() => void>();
+  private pinch: { distance: number; zoom: number; x: number; y: number } | null = null;
 
-  constructor(private readonly container: HTMLElement) {}
+  constructor(private readonly container: HTMLElement) {
+    this.bindPinch();
+  }
+
+  // -------------------------------------------------------------------------
+  // Pinch to zoom
+  //
+  // The browser's own pinch zoom is the wrong tool here. It magnifies the
+  // rasterised page rather than re-rendering it, so the document goes blurry;
+  // and because fixed elements stay anchored to the layout viewport, the
+  // toolbar drifts and can leave the screen entirely. Zooming the document
+  // instead re-renders through pdf.js at the new scale, so it stays sharp, and
+  // the browser viewport never changes so the chrome never moves.
+  //
+  // `touch-action: pan-x pan-y` on the scroller is what actually stops the
+  // browser handling the gesture while leaving native scrolling intact. Safari
+  // additionally emits its own `gesture*` events, which have to be cancelled
+  // separately.
+  // -------------------------------------------------------------------------
+
+  private bindPinch(): void {
+    const el = this.container;
+    el.addEventListener('touchstart', this.onTouchStart, { passive: false });
+    el.addEventListener('touchmove', this.onTouchMove, { passive: false });
+    el.addEventListener('touchend', this.onTouchEnd);
+    el.addEventListener('touchcancel', this.onTouchEnd);
+    for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+      el.addEventListener(type, (event) => event.preventDefault());
+    }
+  }
+
+  private onTouchStart = (event: TouchEvent): void => {
+    if (event.touches.length !== 2) return;
+    const [a, b] = [event.touches[0]!, event.touches[1]!];
+    const box = this.container.getBoundingClientRect();
+    this.pinch = {
+      distance: touchDistance(a, b),
+      zoom: this.zoom,
+      // Where the fingers sit inside the scroller, so that point can be held
+      // still while the scale changes.
+      x: (a.clientX + b.clientX) / 2 - box.left,
+      y: (a.clientY + b.clientY) / 2 - box.top,
+    };
+  };
+
+  private onTouchMove = (event: TouchEvent): void => {
+    const pinch = this.pinch;
+    if (!pinch || event.touches.length !== 2) return;
+    event.preventDefault();
+
+    const distance = touchDistance(event.touches[0]!, event.touches[1]!);
+    if (pinch.distance <= 0) return;
+
+    const before = this.zoom;
+    this.previewZoom(pinch.zoom * (distance / pinch.distance));
+    const growth = this.zoom / before;
+
+    // Keep the content under the fingers where it was. Without this the page
+    // slides away from the pinch and zooming feels unanchored.
+    this.container.scrollLeft = (this.container.scrollLeft + pinch.x) * growth - pinch.x;
+    this.container.scrollTop = (this.container.scrollTop + pinch.y) * growth - pinch.y;
+  };
+
+  private onTouchEnd = (event: TouchEvent): void => {
+    if (!this.pinch || event.touches.length >= 2) return;
+    this.pinch = null;
+    this.commitZoom();
+    for (const fn of this.zoomListeners) fn();
+  };
+
+  /** Fires when a pinch settles, so the chrome can update its zoom readout. */
+  onZoomChange(fn: () => void): () => void {
+    this.zoomListeners.add(fn);
+    return () => this.zoomListeners.delete(fn);
+  }
 
   onLayout(fn: () => void): () => void {
     this.layoutListeners.add(fn);
@@ -98,41 +176,65 @@ export class Viewer {
     this.loadingTask = pdfjs.getDocument({ data });
     const doc = await this.loadingTask.promise;
 
-    for (let i = 0; i < doc.numPages; i++) {
-      const proxy = await doc.getPage(i + 1);
-      this.states.push(this.createShell(i, proxy));
-    }
+    // In parallel, not one at a time. Awaiting each page in turn meant a
+    // 300-page document made 300 sequential round-trips to the worker before
+    // anything appeared on screen.
+    const proxies = await Promise.all(
+      Array.from({ length: doc.numPages }, (_, i) => doc.getPage(i + 1)),
+    );
+    proxies.forEach((proxy, i) => this.states.push(this.createShell(i, proxy)));
     this.pages.push(...this.states);
 
     this.baseScale = this.computeFitScale();
-    this.relayout();
+    this.relayout('render');
     this.startObserving();
   }
 
   /** Existing FreeText/Ink annotations, page by page, for the journal to adopt. */
   async readAnnotations(): Promise<Array<{ page: number; annots: unknown[] }>> {
-    const out: Array<{ page: number; annots: unknown[] }> = [];
-    for (const state of this.states) {
-      const annots = await state.proxy.getAnnotations({ intent: 'display' });
-      if (annots.length) out.push({ page: state.index, annots });
-    }
-    return out;
+    // Also in parallel — this runs once per page on every open, so serialising
+    // it doubled the stall before a long document became usable.
+    const perPage = await Promise.all(
+      this.states.map(async (state) => ({
+        page: state.index,
+        annots: (await state.proxy.getAnnotations({ intent: 'display' })) as unknown[],
+      })),
+    );
+    return perPage.filter((entry) => entry.annots.length > 0);
   }
 
   setZoom(zoom: number): void {
-    const next = Math.max(0.25, Math.min(5, zoom));
+    const next = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
     if (Math.abs(next - this.zoom) < 0.001) return;
     this.zoom = next;
-    this.relayout();
+    this.relayout('render');
+  }
+
+  /**
+   * Zoom without re-rasterising, for use while a pinch is in progress. The
+   * existing bitmaps are stretched to the new size, which is momentarily soft;
+   * `commitZoom` re-renders them sharp when the fingers lift. Re-rendering on
+   * every frame of a gesture would swamp the worker and drop the interaction.
+   */
+  previewZoom(zoom: number): void {
+    const next = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
+    if (Math.abs(next - this.zoom) < 0.0001) return;
+    this.zoom = next;
+    this.relayout('preview');
+  }
+
+  commitZoom(): void {
+    this.relayout('render');
   }
 
   fitWidth(): void {
     this.baseScale = this.computeFitScale();
     this.zoom = 1;
-    this.relayout();
+    this.relayout('render');
   }
 
   close(): void {
+    this.pinch = null;
     this.observer?.disconnect();
     this.observer = null;
     for (const state of this.states) this.unrender(state);
@@ -193,13 +295,24 @@ export class Viewer {
     return Math.max(0.1, Math.min(available, MAX_FIT_WIDTH) / first.widthPt);
   }
 
-  private relayout(): void {
+  private relayout(mode: 'render' | 'preview'): void {
     const scale = this.baseScale * this.zoom;
     for (const state of this.states) {
       const viewport = state.proxy.getViewport({ scale });
       state.viewport = viewport as unknown as Viewportish;
       state.el.style.width = `${viewport.width}px`;
       state.el.style.height = `${viewport.height}px`;
+
+      if (mode === 'preview') {
+        // Stretch what is already drawn. It goes soft for the length of the
+        // gesture and comes back sharp on commit.
+        if (state.canvas) {
+          state.canvas.style.width = `${viewport.width}px`;
+          state.canvas.style.height = `${viewport.height}px`;
+        }
+        continue;
+      }
+
       // Any canvas now shows the wrong resolution; drop it and let the observer
       // re-render whatever is actually on screen.
       if (state.rendered) {
@@ -301,4 +414,14 @@ export class Viewer {
     if (area <= MAX_CANVAS_PIXELS) return wanted;
     return Math.max(0.5, Math.sqrt(MAX_CANVAS_PIXELS / (cssWidth * cssHeight)));
   }
+}
+
+// ---------------------------------------------------------------------------
+
+function touchDistance(a: Touch, b: Touch): number {
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
 }

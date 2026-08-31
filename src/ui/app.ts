@@ -137,6 +137,8 @@ export class App {
       const overlay = new overlayMod.Overlay(viewer, this.journal, font, (event) =>
         this.place(event),
       );
+      // A pinch changes the zoom without going through the buttons.
+      viewer.onZoomChange(() => this.updateZoomLabel());
 
       this.engine = { viewer, overlay, font, metrics, annotations };
       return this.engine;
@@ -300,10 +302,13 @@ export class App {
     }
     const entry: DocEntry = { id: newId('d'), name, blob, objects: null, dirty: false };
     this.docs.push(entry);
-    await this.activate(entry);
+    await this.activate(entry, { isNew: true });
   }
 
-  private async activate(entry: DocEntry): Promise<void> {
+  private async activate(
+    entry: DocEntry,
+    opts: { isNew?: boolean; allowFallback?: boolean } = {},
+  ): Promise<void> {
     if (this.activeId === entry.id) return;
 
     this.stashActive();
@@ -339,11 +344,24 @@ export class App {
       engine.overlay.render();
     } catch (err) {
       console.error(err);
-      this.docs = this.docs.filter((d) => d.id !== entry.id);
       this.activeId = null;
-      if (this.docs.length === 0) this.showDocument(false);
-      this.updateChrome();
+      // A file that cannot be opened at all should not join the list. One that
+      // was already open keeps its place and its edits: the failure may be
+      // transient, and throwing away a document's work over it is worse than
+      // the failure.
+      if (opts.isNew) this.docs = this.docs.filter((d) => d.id !== entry.id);
       this.toast(this.describeError(err, 'That PDF could not be opened.'), true);
+
+      // Falling back to another open document beats leaving a blank viewer with
+      // documents still listed. Never retry the one that just failed, and only
+      // fall back once so a second failure cannot loop.
+      const fallback = opts.allowFallback === false ? undefined : this.docs.find((d) => d.id !== entry.id);
+      if (fallback) {
+        await this.activate(fallback, { allowFallback: false });
+      } else {
+        this.showDocument(false);
+        this.updateChrome();
+      }
     } finally {
       this.switching = false;
       this.els.loading.hidden = true;
@@ -615,6 +633,10 @@ export class App {
   private updateZoomLabel(): void {
     const zoom = this.engine?.viewer.zoomLevel ?? 1;
     this.els.zoomValue.textContent = `${Math.round(zoom * 100)}%`;
+    // The zoom controls are hidden on a phone to keep the bar uncluttered, but
+    // once someone has pinched there has to be a way back to fit-width. Reveal
+    // them exactly when they are needed.
+    document.body.classList.toggle('is-zoomed', Math.abs(zoom - 1) > 0.01);
   }
 
   private hint(message: string | null): void {

@@ -217,6 +217,15 @@ try {
   );
   check('the removed text is gone from the file', !resavedSubtypes.includes('/FreeText'));
   check('the signature survived the round trip', resavedSubtypes.includes('/Ink'));
+  // Clearing an annotation from the page's array does not remove the object
+  // itself, and pdf-lib writes every object it holds — so each save cycle used
+  // to leave a dead copy behind. This save has strictly fewer annotations than
+  // the last, so it must not have produced a larger file.
+  check(
+    'repeated saves do not accumulate dead objects',
+    resavedBytes.length <= bytes.length,
+    `${bytes.length} bytes then ${resavedBytes.length} bytes, with one fewer annotation`,
+  );
 
   // Several documents can be open at once, each holding its own edits. The
   // failure mode worth guarding is edits leaking between them, or a switch
@@ -244,8 +253,62 @@ try {
   );
   check('and the removed text did not come back', (await page.locator('.obj-text').count()) === 0);
 
+  // A file that cannot be opened must not take the app down with it. The
+  // failure modes that matter are being left on a blank viewer while documents
+  // are still listed, and a failed open evicting the document already open.
+  // Console errors are judged before the deliberate failure below, which is
+  // expected to log one.
   const realErrors = consoleErrors.filter((e) => !/RenderingCancelled/.test(e));
   check('no console errors', realErrors.length === 0, realErrors.join(' | '));
+
+  console.log('\nOpening something that is not a PDF');
+  // The document list only exists in the DOM while the sheet has been rendered,
+  // so it has to be counted through the sheet rather than read stale.
+  const countDocuments = async () => {
+    await page.click('[data-action="files"]');
+    await page.waitForSelector('#files-dialog[open]');
+    const total = await page.locator('.doc-item').count();
+    await page.click('[data-files="close"]');
+    await page.waitForFunction(() => !document.querySelector('#files-dialog')?.open);
+    return total;
+  };
+
+  const documentsBefore = await countDocuments();
+  await page.setInputFiles('#file-input', {
+    name: 'broken.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.7\nthis is not a pdf at all\n'),
+  });
+  // Wait for the message itself, not merely for a visible toast — an earlier
+  // "Saved" notice may still be on screen and would match instantly.
+  const shownError = await page
+    .waitForFunction(
+      () => {
+        const toast = document.querySelector('#toast');
+        return !!toast && !toast.hidden && /could not be opened|password/i.test(toast.textContent ?? '');
+      },
+      undefined,
+      { timeout: 15_000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  check('a clear error is shown', shownError, await page.locator('#toast').textContent());
+
+  // The fallback loads after the message appears, so wait for it rather than
+  // reading the gap between the two.
+  await page.waitForFunction(() => document.querySelectorAll('.page').length > 0, undefined, {
+    timeout: 15_000,
+  });
+  check(
+    'the app falls back to a document rather than a blank screen',
+    (await page.locator('.page').count()) > 0,
+    `${await page.locator('.page').count()} pages showing`,
+  );
+  check(
+    'the unreadable file is not added, and the open ones are kept',
+    (await countDocuments()) === documentsBefore,
+    `${documentsBefore} documents before, ${await countDocuments()} after`,
+  );
 
   // iOS Safari zooms the whole page when a field is focused with a computed
   // font size under 16px. At phone width a 12pt annotation renders around 7px,
@@ -401,9 +464,78 @@ try {
     'a tool still responds after an edit',
     (await small.locator('.tool.is-active').getAttribute('data-tool')) === 'text',
   );
-  // Pinch zoom magnifies fixed elements along with the page and leaves them
-  // anchored to the layout viewport, so the toolbar ballooned and slid off
-  // screen. The chrome layer counter-scales; drive a real page scale to check.
+  // A pinch must zoom the document, not the browser. Browser zoom magnifies the
+  // rasterised page (blurry), drags the fixed chrome around, and can push it off
+  // screen. Dispatching a real two-finger sequence checks all three at once.
+  console.log('\nChecking pinch zoom');
+  const sample = () =>
+    small.evaluate(() => {
+      const canvas = document.querySelector('.page canvas');
+      const bar = document.querySelector('.toolbar').getBoundingClientRect();
+      return {
+        cssWidth: parseFloat(canvas.style.width),
+        backingWidth: canvas.width,
+        // Device pixels per CSS pixel. If the page were merely magnified this
+        // would fall as the zoom rose; re-rendering holds it constant.
+        density: canvas.width / parseFloat(canvas.style.width),
+        browserZoom: window.visualViewport.scale,
+        toolbar: { top: bar.top, height: bar.height },
+      };
+    });
+
+  const beforePinch = await sample();
+  await small.evaluate(() => {
+    const viewer = document.querySelector('.viewer');
+    const box = viewer.getBoundingClientRect();
+    const cx = box.left + box.width / 2;
+    const cy = box.top + box.height / 2;
+    const touch = (id, x, y) =>
+      new Touch({ identifier: id, target: viewer, clientX: x, clientY: y });
+    const send = (type, points) =>
+      viewer.dispatchEvent(
+        new TouchEvent(type, {
+          touches: points,
+          targetTouches: points,
+          changedTouches: points,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    send('touchstart', [touch(1, cx - 50, cy), touch(2, cx + 50, cy)]);
+    send('touchmove', [touch(1, cx - 100, cy), touch(2, cx + 100, cy)]);
+    send('touchend', []);
+  });
+  await small.waitForFunction(
+    (was) => parseFloat(document.querySelector('.page canvas').style.width) > was * 1.5,
+    beforePinch.cssWidth,
+    { timeout: 10_000 },
+  );
+  const afterPinch = await sample();
+
+  check(
+    'a pinch zooms the document',
+    afterPinch.cssWidth > beforePinch.cssWidth * 1.5,
+    `${beforePinch.cssWidth}px -> ${afterPinch.cssWidth}px`,
+  );
+  check(
+    'the page is re-rendered at the new scale rather than magnified',
+    Math.abs(afterPinch.density - beforePinch.density) < 0.05,
+    `${beforePinch.density.toFixed(2)} device px per css px before, ${afterPinch.density.toFixed(2)} after`,
+  );
+  check(
+    'the browser itself never zooms',
+    afterPinch.browserZoom === 1,
+    `visual viewport scale ${afterPinch.browserZoom}`,
+  );
+  check(
+    'the toolbar does not move or resize when the document zooms',
+    Math.abs(afterPinch.toolbar.top - beforePinch.toolbar.top) < 1 &&
+      Math.abs(afterPinch.toolbar.height - beforePinch.toolbar.height) < 1,
+    `top ${beforePinch.toolbar.top} -> ${afterPinch.toolbar.top}`,
+  );
+
+  // Belt and braces: if browser zoom ever does happen — accessibility zoom, or a
+  // browser that ignores touch-action — the chrome must still be usable.
   console.log('\nChecking the chrome survives pinch zoom');
   const cdp = await phone.newCDPSession(small);
   const measureChrome = () =>

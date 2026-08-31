@@ -109,6 +109,23 @@ both the on-screen overlay and the exporter use that same measurement. There is 
 auto-wrapping — a wrap implemented once in CSS and once in the exporter would drift, and drift
 shows up as text that moves when you save. The box hugs the widest line you typed.
 
+### Zoom
+
+Pinch is handled by the app, not the browser. `touch-action: pan-x pan-y` withholds
+zoom gestures from the browser, and the viewer turns them into document zoom, re-rendering
+through pdf.js at the new scale.
+
+This is not a preference. Browser zoom magnifies the rasterised page, so the document goes
+blurry; and it leaves fixed elements anchored to the layout viewport, which sends the toolbar
+drifting and eventually off screen. Suppressing it with `user-scalable=no` is not an option
+either — iOS Safari ignores that, and it would be the wrong thing to do to a document viewer.
+Owning the gesture solves all of it: the page stays sharp because it is re-rendered, and the
+browser viewport never changes so the chrome never moves.
+
+During the gesture the existing bitmaps are stretched and it goes momentarily soft;
+re-rasterising every frame would swamp the worker. They are re-rendered sharp when the
+fingers lift.
+
 ### Mobile
 
 The three things that actually decide whether this survives on a phone:
@@ -167,3 +184,9 @@ the hand-written appearance streams actually paint, and paint in the right place
   xref with `/Prev`) would make saving a large file near-instant. It is a natural next step because
   nothing existing is ever modified.
 - **Editing invalidates an existing digital signature,** as any modification does.
+- **Pages are rendered whole, not tiled.** At high zoom the full page is rasterised even though
+  a fraction of it is visible, so the canvas pixel budget starts reducing density past roughly
+  4x. A tiled renderer would hold sharpness further, at considerably more complexity.
+- **The offline cache is never pruned.** Asset names are content-hashed, so a redeploy adds
+  entries rather than replacing them and the cache grows slowly across deployments. The browser
+  evicts under storage pressure, so this is untidy rather than harmful.
