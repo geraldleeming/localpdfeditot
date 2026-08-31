@@ -433,11 +433,19 @@ export class Overlay {
 
     const metrics = measureText(this.font, value, obj.size);
     const top = obj.y + obj.height;
-    this.journal.update<TextObj>(id, {
-      value,
+    const rect = {
+      x: obj.x,
+      y: top - metrics.height,
       width: metrics.width,
       height: metrics.height,
-      y: top - metrics.height,
+    };
+    // A line long enough to run past the page edge would be cut off there by
+    // every PDF viewer, since nothing outside the page is drawn. Pull it back
+    // onto the page instead.
+    const page = this.viewer.pages[obj.page];
+    this.journal.update<TextObj>(id, {
+      value,
+      ...(page ? clampToPage(rect, page.widthPt, page.heightPt) : rect),
     });
   }
 

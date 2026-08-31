@@ -425,9 +425,14 @@ button:disabled {
   box-shadow: var(--shadow-sm);
 }
 
+/*
+ * Offset so the visible dot clears the box entirely. Centred on the corner the
+ * dots sat half inside, which on a short line covered the last characters — the
+ * text looked truncated when it was merely hidden behind a control.
+ */
 .handle-delete {
-  top: -16px;
-  right: -16px;
+  top: -26px;
+  right: -26px;
   width: 32px;
   height: 32px;
   color: #fff;
@@ -445,8 +450,8 @@ button:disabled {
 }
 
 .handle-resize {
-  bottom: -16px;
-  right: -16px;
+  bottom: -26px;
+  right: -26px;
   width: 32px;
   height: 32px;
   cursor: nwse-resize;

@@ -230,17 +230,21 @@ try {
   const editor = await small.evaluate(() => {
     const el = document.querySelector('.obj-editor');
     const cs = getComputedStyle(el);
-    return { fontPx: parseFloat(cs.fontSize), transform: cs.transform, width: el.getBoundingClientRect().width };
+    const scale = new DOMMatrixReadOnly(cs.transform).a;
+    return { fontPx: parseFloat(cs.fontSize), scale, onScreen: parseFloat(cs.fontSize) * scale };
   });
   check(
     'editor font size stays at or above the 16px zoom threshold',
     editor.fontPx >= 16,
     `${editor.fontPx}px`,
   );
+  // Above the threshold no compensation is needed; below it the element is
+  // scaled back down. What matters either way is that the user sees the real
+  // text size, so assert that rather than the mechanism used to achieve it.
   check(
-    'and is scaled back down so it still looks the right size',
-    editor.transform !== 'none' && editor.width < 90,
-    `transform ${editor.transform}, rendered ${editor.width.toFixed(1)}px wide`,
+    'new text is large enough to read on a phone',
+    editor.onScreen >= 14,
+    `${editor.onScreen.toFixed(1)}px on screen`,
   );
   // Text must never be clipped. The box is measured with Helvetica's own
   // metrics, but the device renders with whatever substitute it has, so the
@@ -259,6 +263,36 @@ try {
 
   await small.keyboard.press('Control+Enter');
   await small.waitForSelector('.obj-text');
+  // The selection handles used to be centred on the box corners, so half of
+  // each dot sat over the content. On a short line that hid the last characters
+  // and read exactly like truncated text. Their visible dots must clear the box.
+  const handles = await small.evaluate(() => {
+    const box = document.querySelector('.obj-text').getBoundingClientRect();
+    const DOT = 14; // the visible circle inside the larger touch target
+    const clears = (selector) => {
+      const el = document.querySelector(selector);
+      if (!el) return false;
+      const b = el.getBoundingClientRect();
+      const cx = b.left + b.width / 2;
+      const cy = b.top + b.height / 2;
+      const dot = {
+        left: cx - DOT / 2,
+        right: cx + DOT / 2,
+        top: cy - DOT / 2,
+        bottom: cy + DOT / 2,
+      };
+      return (
+        dot.right <= box.left ||
+        dot.left >= box.right ||
+        dot.bottom <= box.top ||
+        dot.top >= box.bottom
+      );
+    };
+    return { remove: clears('.handle-delete'), resize: clears('.handle-resize') };
+  });
+  check('the remove handle does not sit over the text', handles.remove);
+  check('the resize handle does not sit over the text', handles.resize);
+
   await small.keyboard.press('Escape'); // drop the selection handles before measuring
 
   const fit = await small.evaluate(() => {
@@ -276,6 +310,20 @@ try {
     'the committed box contains the rendered text',
     fit.box + 0.5 >= fit.needed,
     `box ${fit.box.toFixed(1)}px, text needs ${fit.needed.toFixed(1)}px`,
+  );
+
+  // Anything outside the page is simply not drawn by a PDF viewer, so a line
+  // that grew past the edge would be cut off in the saved file no matter how
+  // the box is measured.
+  const onPage = await small.evaluate(() => {
+    const text = document.querySelector('.obj-text').getBoundingClientRect();
+    const page = document.querySelector('.page').getBoundingClientRect();
+    return { overhang: +(text.right - page.right).toFixed(1), textW: +text.width.toFixed(1) };
+  });
+  check(
+    'a long line is kept inside the page rather than running off it',
+    onPage.overhang <= 1,
+    `${onPage.overhang}px past the page edge`,
   );
   // After the keyboard has been up, the chrome must still be where it looks.
   // The failure this guards is iOS scrolling the window to reveal the field and

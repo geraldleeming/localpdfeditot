@@ -21,7 +21,20 @@ import { SignaturePad, type SignatureResult } from './signature-pad.ts';
  * on a phone is the difference between an instant first paint and a stall.
  */
 
-const DEFAULT_FONT_SIZE = 12;
+/** What new text should measure on screen, in CSS pixels. */
+const TARGET_ON_SCREEN_PX = 16;
+
+/**
+ * New text is sized to be legible at the current zoom, not to a fixed point
+ * size. A phone showing a whole A4 page renders 12pt at about 7px — too small
+ * to read, never mind to check before saving. Aiming at an on-screen size and
+ * converting back through the viewport scale gives readable text on a phone
+ * without producing something absurd on a desktop showing the page larger. The
+ * clamp keeps it a plausible annotation size at either extreme.
+ */
+function defaultFontSize(viewportScale: number): number {
+  return Math.round(clamp(TARGET_ON_SCREEN_PX / viewportScale, 14, 28));
+}
 /** Roughly 2.2 inches — a natural signature width on a letter/A4 page. */
 const DEFAULT_SIGNATURE_WIDTH = 160;
 const ZOOM_STEP = 1.25;
@@ -516,7 +529,8 @@ export class App {
     const engine = this.engine;
     if (!engine) return;
 
-    const metrics = engine.metrics.measureText(engine.font, '', DEFAULT_FONT_SIZE);
+    const size = defaultFontSize(event.page.viewport.scale);
+    const metrics = engine.metrics.measureText(engine.font, '', size);
     const obj: TextObj = {
       kind: 'text',
       id: newId('t'),
@@ -528,7 +542,7 @@ export class App {
       width: metrics.width,
       height: metrics.height,
       value: '',
-      size: DEFAULT_FONT_SIZE,
+      size,
       color: { r: 0, g: 0, b: 0 },
     };
 

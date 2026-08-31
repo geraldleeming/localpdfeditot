@@ -17,6 +17,8 @@ export const LINE_HEIGHT_RATIO = 1.2;
 export const TEXT_PADDING = 2;
 /** Fraction of the font size from the top of a line box down to the baseline. */
 export const BASELINE_RATIO = 0.85;
+/** Slack on the measured width, absorbing per-renderer differences in advances. */
+const WIDTH_HEADROOM = 1.04;
 
 let fontPromise: Promise<PDFFont> | null = null;
 
@@ -109,7 +111,11 @@ export function measureText(font: PDFFont, value: string, size: number): TextMet
     if (w > widest) widest = w;
   }
   return {
-    width: Math.max(widest, size * 0.75) + TEXT_PADDING * 2,
+    // A little wider than the glyphs strictly need. Type rendered at small
+    // sizes has its advances rounded up, and the appearance stream's BBox clips
+    // whatever does not fit inside it, so a box measured exactly can shave the
+    // last character. The text still starts at the same point, so nothing moves.
+    width: Math.max(widest * WIDTH_HEADROOM, size * 0.75) + TEXT_PADDING * 2,
     height: lines.length * size * LINE_HEIGHT_RATIO + TEXT_PADDING * 2,
     lines,
   };
