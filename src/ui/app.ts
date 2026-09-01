@@ -668,22 +668,40 @@ function exportName(original: string): string {
 type Delivery = 'shared' | 'downloaded' | 'cancelled';
 
 /**
+ * True only on iOS and iPadOS, where the `download` attribute on a blob URL is
+ * ignored: the browser navigates to the blob and shows the PDF instead of
+ * saving it. Every browser there is WebKit underneath, so this is a platform
+ * check rather than a browser one. iPadOS reports itself as a Mac, so it is
+ * told apart by having a touch screen.
+ */
+function downloadAttributeIsIgnored(): boolean {
+  const ua = navigator.userAgent;
+  if (/iPad|iPhone|iPod/.test(ua)) return true;
+  return /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
+}
+
+/**
  * Hand the finished PDF to the user.
  *
- * iOS Safari ignores the `download` attribute on a blob URL: it navigates to
- * the blob instead, so "Save" opened the PDF in a viewer with no obvious way to
- * keep it. The Web Share API is the platform's real file-saving affordance and
- * is where "Save to Files" lives, so it is tried first wherever the browser can
- * share a file.
+ * A plain download is what people expect on a desktop: the file lands in
+ * Downloads and nothing interrupts. That is the default, and it is what the
+ * `download` attribute does everywhere it is honoured — Windows, macOS, Linux,
+ * Android alike.
  *
- * The fallback still matters. Desktop browsers mostly cannot share files, and
- * iOS requires the share sheet to open under a still-live user gesture — which
- * a slow export can outlast. Either way the anchor download takes over.
+ * The share sheet is used only on iOS and iPadOS, where that attribute does
+ * nothing and saving would otherwise be impossible. Chrome on macOS can share
+ * files too, but offering it there replaced a one-click download with a menu,
+ * which is worse. Capability is the wrong test; the platform's brokenness is
+ * the right one.
  */
 async function deliverPdf(bytes: Uint8Array, filename: string): Promise<Delivery> {
   const file = new File([bytes as BlobPart], filename, { type: 'application/pdf' });
 
-  if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+  if (
+    downloadAttributeIsIgnored() &&
+    typeof navigator.canShare === 'function' &&
+    navigator.canShare({ files: [file] })
+  ) {
     try {
       await navigator.share({ files: [file], title: filename });
       return 'shared';

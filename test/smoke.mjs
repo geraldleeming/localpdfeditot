@@ -227,6 +227,60 @@ try {
     `${bytes.length} bytes then ${resavedBytes.length} bytes, with one fewer annotation`,
   );
 
+  // Saving must reach the user the way their platform expects. Chrome on macOS
+  // can share files, so keying off capability sent desktop users to a share
+  // sheet instead of downloading. The decision has to hinge on whether the
+  // download attribute works, so both cases are run with sharing available.
+  console.log('\nChecking how the saved file is delivered');
+  const deliveryOn = async (userAgent) => {
+    const probe = await browser.newContext({ acceptDownloads: true, userAgent });
+    const tab = await probe.newPage();
+    await tab.addInitScript(() => {
+      window.__shared = false;
+      Object.defineProperty(navigator, 'canShare', { value: () => true, configurable: true });
+      Object.defineProperty(navigator, 'share', {
+        value: async () => {
+          window.__shared = true;
+        },
+        configurable: true,
+      });
+    });
+    await tab.goto(base);
+    await tab.setInputFiles('#file-input', fixture);
+    await tab.waitForSelector('.page.is-rendered', { timeout: 30_000 });
+
+    let downloaded = false;
+    const pending = tab
+      .waitForEvent('download', { timeout: 8000 })
+      .then(() => {
+        downloaded = true;
+      })
+      .catch(() => {});
+    await tab.click('[data-action="save"]');
+    await pending;
+    const shared = await tab.evaluate(() => window.__shared);
+    await probe.close();
+    return { downloaded, shared };
+  };
+
+  const onMac = await deliveryOn(
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  );
+  check(
+    'a desktop browser downloads the file rather than opening a share sheet',
+    onMac.downloaded && !onMac.shared,
+    `downloaded=${onMac.downloaded} shared=${onMac.shared}`,
+  );
+
+  const onPhone = await deliveryOn(
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+  );
+  check(
+    'iOS uses the share sheet, where the download attribute does nothing',
+    onPhone.shared && !onPhone.downloaded,
+    `downloaded=${onPhone.downloaded} shared=${onPhone.shared}`,
+  );
+
   // Several documents can be open at once, each holding its own edits. The
   // failure mode worth guarding is edits leaking between them, or a switch
   // quietly resetting the document you came back to.

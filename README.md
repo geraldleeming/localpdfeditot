@@ -109,6 +109,17 @@ both the on-screen overlay and the exporter use that same measurement. There is 
 auto-wrapping — a wrap implemented once in CSS and once in the exporter would drift, and drift
 shows up as text that moves when you save. The box hugs the widest line you typed.
 
+### Saving
+
+An ordinary `<a download>` on every platform that honours it — Windows, macOS, Linux, Android —
+so the file lands in Downloads with nothing in the way.
+
+iOS and iPadOS are the exception: there the `download` attribute on a blob URL is ignored and the
+browser navigates to the blob, showing the PDF instead of saving it. Those platforms get the Web
+Share API, which is where "Save to Files" lives. The test is the platform's brokenness, not the
+browser's capability — Chrome on macOS can share files perfectly well, and keying off that
+replaced a one-click download with a menu.
+
 ### Zoom
 
 Pinch is handled by the app, not the browser. `touch-action: pan-x pan-y` withholds
