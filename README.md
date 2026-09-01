@@ -171,6 +171,33 @@ There is no UI framework. The three performance-critical paths — page renderin
 and drag — all bypass a framework by nature, leaving it responsible for a toolbar and two modals.
 The split above means adding React later would mean writing a new `src/ui/`, not a rewrite.
 
+## Verifying that nothing is uploaded
+
+`npm run verify:privacy` checks the app's central claim against the running application rather
+than against the source, because the source is not the whole story: pdf.js will fetch CMaps and
+standard font data when given a URL to fetch them from.
+
+It records every request during a complete edit — open, add text, draw and place a signature,
+save — and requires each to be same-origin, a GET, and free of any request body. It also watches
+for WebSockets and for `navigator.sendBeacon`, which is how telemetry usually leaves a page
+without looking like a request.
+
+Then it repeats the entire flow **with the network switched off**. That is the half that really
+settles it: if any part of opening, editing or saving needed a server, it would fail. Passing
+offline means the editing path makes no requests at all.
+
+Current result — eleven requests, all of them the app's own files:
+
+```
+/  /assets/index-*.js  /assets/index-*.css  /assets/pdfjs-*.js  /assets/pdflib-*.js
+/assets/viewer-*.js  /assets/overlay-*.js  /assets/geometry-*.js  /assets/metrics-*.js
+/assets/annotations-*.js  /assets/pdf.worker.min-*.mjs
+```
+
+What this does **not** claim: the web server that hosts these files sees ordinary request logs —
+your IP, the time, which assets you fetched. It never sees the document. And once you save, the
+file is in your Downloads and whatever happens to it next is outside this app.
+
 ## Testing
 
 `npm test` drives the real production bundle in Chromium: it opens a PDF, adds text, draws and

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "fixture": "node test/make-fixture.mjs",
-    "test": "npm run fixture && vite build && node test/smoke.mjs && node test/pages-check.mjs"
+    "test": "npm run fixture && vite build && node test/smoke.mjs && node test/pages-check.mjs && node test/privacy-check.mjs",
+    "verify:privacy": "npm run fixture && vite build && node test/privacy-check.mjs"
   },
   "dependencies": {
     "pdf-lib": "^1.17.1",
