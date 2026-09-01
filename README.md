@@ -120,6 +120,11 @@ Share API, which is where "Save to Files" lives. The test is the platform's brok
 browser's capability — Chrome on macOS can share files perfectly well, and keying off that
 replaced a one-click download with a menu.
 
+The share payload carries **files and nothing else**. Adding a `title` — or `text`, or `url` —
+alongside them makes iOS treat the share as two separate things, and "Save to Files" writes both,
+leaving a stray text item in Files next to the PDF. The filename comes from the `File` object, so
+a title adds nothing in the first place.
+
 ### Zoom
 
 Pinch is handled by the app, not the browser. `touch-action: pan-x pan-y` withholds

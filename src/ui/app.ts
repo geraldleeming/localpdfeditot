@@ -740,7 +740,12 @@ async function deliverPdf(bytes: Uint8Array, filename: string): Promise<Delivery
     navigator.canShare({ files: [file] })
   ) {
     try {
-      await navigator.share({ files: [file], title: filename });
+      // Files only, deliberately. Adding `title` (or `text`, or `url`) alongside
+      // them makes iOS treat the share as two things — the file *and* a piece of
+      // text — and "Save to Files" then writes both, leaving a stray text item
+      // next to the PDF. The name the file is saved under comes from the File
+      // itself, so the title adds nothing anyway.
+      await navigator.share({ files: [file] });
       return 'shared';
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return 'cancelled';

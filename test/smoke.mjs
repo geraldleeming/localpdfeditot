@@ -237,10 +237,15 @@ try {
     const tab = await probe.newPage();
     await tab.addInitScript(() => {
       window.__shared = false;
+      window.__sharePayload = null;
       Object.defineProperty(navigator, 'canShare', { value: () => true, configurable: true });
       Object.defineProperty(navigator, 'share', {
-        value: async () => {
+        value: async (data) => {
           window.__shared = true;
+          window.__sharePayload = {
+            keys: Object.keys(data ?? {}),
+            files: (data?.files ?? []).map((f) => ({ name: f.name, type: f.type })),
+          };
         },
         configurable: true,
       });
@@ -259,8 +264,9 @@ try {
     await tab.click('[data-action="save"]');
     await pending;
     const shared = await tab.evaluate(() => window.__shared);
+    const payload = await tab.evaluate(() => window.__sharePayload);
     await probe.close();
-    return { downloaded, shared };
+    return { downloaded, shared, payload };
   };
 
   const onMac = await deliveryOn(
@@ -279,6 +285,20 @@ try {
     'iOS uses the share sheet, where the download attribute does nothing',
     onPhone.shared && !onPhone.downloaded,
     `downloaded=${onPhone.downloaded} shared=${onPhone.shared}`,
+  );
+  // A share carrying anything besides files makes iOS offer two things, and
+  // "Save to Files" writes both — the PDF plus a stray text item beside it.
+  check(
+    'the share carries the file and nothing else',
+    onPhone.payload?.keys.length === 1 && onPhone.payload.keys[0] === 'files',
+    `share() received ${JSON.stringify(onPhone.payload?.keys ?? null)}`,
+  );
+  check(
+    'the shared file keeps its name and PDF type',
+    onPhone.payload?.files.length === 1 &&
+      onPhone.payload.files[0].name.endsWith('-edited.pdf') &&
+      onPhone.payload.files[0].type === 'application/pdf',
+    JSON.stringify(onPhone.payload?.files ?? null),
   );
 
   // The document list reports edit state, which is only worth showing if it is
