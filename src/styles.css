@@ -657,7 +657,7 @@ button:disabled {
   color: var(--text-faint);
 }
 
-.doc-meta .is-unsaved {
+.doc-meta.is-unsaved {
   color: var(--accent);
   font-weight: 500;
 }

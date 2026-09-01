@@ -61,7 +61,25 @@ interface DocEntry {
   blob: Blob;
   /** Edits, stashed while inactive. `null` until the file's own annotations are read. */
   objects: EditObj[] | null;
+  /** The edits as they stood when the file was opened, or when it was last saved. */
+  baseline: string;
+  /** Whether the edits differ from that baseline. */
   dirty: boolean;
+  /** Whether this document has been saved at least once in this session. */
+  saved: boolean;
+}
+
+/**
+ * A comparable snapshot of a document's edits.
+ *
+ * Compared against a baseline this makes "unsaved changes" mean what it says.
+ * A flag set on every journal change would latch on and stay on: adding text
+ * and then undoing it would still claim there was work to lose, which makes the
+ * warning worth ignoring — and it is the only thing standing between the user
+ * and losing edits when they close a document.
+ */
+function editSignature(objects: readonly EditObj[]): string {
+  return JSON.stringify(objects);
 }
 
 export class App {
@@ -106,7 +124,9 @@ export class App {
       this.els.undo.disabled = !this.journal.canUndo;
       this.els.redo.disabled = !this.journal.canRedo;
       const doc = this.activeDoc;
-      if (doc && !this.switching) doc.dirty = true;
+      if (doc && !this.switching) {
+        doc.dirty = editSignature(this.journal.all()) !== doc.baseline;
+      }
     });
 
     this.bindChrome();
@@ -300,7 +320,15 @@ export class App {
       await this.activate(existing);
       return;
     }
-    const entry: DocEntry = { id: newId('d'), name, blob, objects: null, dirty: false };
+    const entry: DocEntry = {
+      id: newId('d'),
+      name,
+      blob,
+      objects: null,
+      baseline: '',
+      dirty: false,
+      saved: false,
+    };
     this.docs.push(entry);
     await this.activate(entry, { isNew: true });
   }
@@ -334,6 +362,10 @@ export class App {
           hydrated.push(...engine.annotations.annotationsToObjects(page, annots));
         }
         entry.objects = hydrated;
+        // The file's own annotations are the starting point, not an edit. A
+        // document that arrives with two signatures already in it has not been
+        // changed by anyone here.
+        entry.baseline = editSignature(hydrated);
       }
 
       this.activeId = entry.id;
@@ -434,15 +466,18 @@ export class App {
       name.className = 'doc-name';
       name.textContent = doc.name;
 
+      // What matters here is whether there is work at risk, not how many
+      // objects a page happens to contain. The old count was also misleading,
+      // since it included annotations the file already had before it was opened.
       const meta = document.createElement('span');
       meta.className = 'doc-meta';
-      const count = (doc.id === this.activeId ? this.journal.all().length : doc.objects?.length) ?? 0;
-      meta.textContent = `${count} ${count === 1 ? 'item' : 'items'}`;
       if (doc.dirty) {
-        const flag = document.createElement('span');
-        flag.className = 'is-unsaved';
-        flag.textContent = ' · unsaved';
-        meta.append(flag);
+        meta.classList.add('is-unsaved');
+        meta.textContent = 'Edited · not saved yet';
+      } else if (doc.saved) {
+        meta.textContent = 'Edited · saved';
+      } else {
+        meta.textContent = 'No changes';
       }
 
       text.append(name, meta);
@@ -501,7 +536,9 @@ export class App {
       // Dismissing the share sheet is a decision, not a save. Leave the
       // document dirty and say nothing.
       if (outcome === 'cancelled') return;
+      doc.baseline = editSignature(objects);
       doc.dirty = false;
+      doc.saved = true;
 
       const where = outcome === 'shared' ? 'Saved.' : 'Saved to your downloads.';
       const substituted = objects.some(

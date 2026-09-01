@@ -281,6 +281,55 @@ try {
     `downloaded=${onPhone.downloaded} shared=${onPhone.shared}`,
   );
 
+  // The document list reports edit state, which is only worth showing if it is
+  // exact. A flag that latched on would claim work was at risk after an undo,
+  // and it is the only warning before closing discards edits.
+  console.log('\nChecking the edit-state label');
+  const stateProbe = await browser.newContext({ acceptDownloads: true });
+  const stateTab = await stateProbe.newPage();
+  await stateTab.goto(base);
+  await stateTab.setInputFiles('#file-input', fixture);
+  await stateTab.waitForSelector('.page.is-rendered', { timeout: 30_000 });
+
+  const readState = async () => {
+    await stateTab.click('[data-action="files"]');
+    await stateTab.waitForSelector('#files-dialog[open]');
+    const label = await stateTab.locator('.doc-item.is-active .doc-meta').textContent();
+    await stateTab.click('[data-files="close"]');
+    await stateTab.waitForFunction(() => !document.querySelector('#files-dialog')?.open);
+    return label?.trim();
+  };
+
+  check('an untouched document reports no changes', (await readState()) === 'No changes');
+
+  await stateTab.click('[data-tool="text"]');
+  await stateTab.locator('.page').first().click({ position: { x: 90, y: 260 } });
+  await stateTab.waitForSelector('.obj-editor');
+  await stateTab.keyboard.type('Draft');
+  await stateTab.keyboard.press('Control+Enter');
+  await stateTab.waitForSelector('.obj-text');
+  check('adding text reports unsaved work', (await readState()) === 'Edited · not saved yet');
+
+  // Undoing all the way back means nothing is at risk any more.
+  while (!(await stateTab.locator('[data-action="undo"]').isDisabled())) {
+    await stateTab.click('[data-action="undo"]');
+  }
+  check(
+    'undoing back to the start reports no changes again',
+    (await readState()) === 'No changes',
+    await readState(),
+  );
+
+  await stateTab.click('[data-action="redo"]');
+  await stateTab.waitForSelector('.obj-text');
+  const [stateDownload] = await Promise.all([
+    stateTab.waitForEvent('download', { timeout: 30_000 }),
+    stateTab.click('[data-action="save"]'),
+  ]);
+  await stateDownload.path();
+  check('saving reports the work is safe', (await readState()) === 'Edited · saved');
+  await stateProbe.close();
+
   // Several documents can be open at once, each holding its own edits. The
   // failure mode worth guarding is edits leaking between them, or a switch
   // quietly resetting the document you came back to.
